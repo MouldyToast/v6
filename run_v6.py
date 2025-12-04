@@ -34,6 +34,7 @@ QUICK START:
 import os
 import sys
 import time
+from datetime import datetime
 import numpy as np
 import torch
 
@@ -104,9 +105,75 @@ CONFIG = {
     "eval_interval": 1000,
     "save_interval": 5000,
 
+    # ─── Run Naming (automatic unique names) ──────────────────────────────────
+    "auto_name_runs": True,                   # Auto-generate unique run names with timestamps
+    "run_name": None,                         # Custom run name (if auto_name_runs=False)
+    # When auto_name_runs=True:
+    #   - Checkpoints saved to: checkpoint_dir/run_YYYYMMDD_HHMMSS/
+    #   - TensorBoard logs to: checkpoint_dir/run_YYYYMMDD_HHMMSS/logs/
+    #   - Outputs named: generated_YYYYMMDD_HHMMSS.npy, viz_YYYYMMDD_HHMMSS.png
+
     # ─── Model Architecture (usually leave as default) ────────────────────────
     "config_preset": "default",               # "default", "fast", or "large"
 }
+
+
+# ==============================================================================
+# RUN ID MANAGEMENT - Automatic unique naming for outputs
+# ==============================================================================
+
+_CURRENT_RUN_ID = None  # Set once per script execution
+
+
+def get_run_id():
+    """Get or create a unique run ID for this execution."""
+    global _CURRENT_RUN_ID
+
+    if _CURRENT_RUN_ID is None:
+        if CONFIG["auto_name_runs"]:
+            _CURRENT_RUN_ID = datetime.now().strftime("run_%Y%m%d_%H%M%S")
+        elif CONFIG["run_name"]:
+            _CURRENT_RUN_ID = CONFIG["run_name"]
+        else:
+            _CURRENT_RUN_ID = "run"
+
+    return _CURRENT_RUN_ID
+
+
+def get_run_dir():
+    """Get the directory for this run's outputs."""
+    if CONFIG["auto_name_runs"]:
+        return os.path.join(CONFIG["checkpoint_dir"], get_run_id())
+    return CONFIG["checkpoint_dir"]
+
+
+def get_output_path(base_name, extension):
+    """
+    Get a unique output path for this run.
+
+    Args:
+        base_name: Base name like "generated" or "trajectory_comparison"
+        extension: File extension like ".npy" or ".png"
+
+    Returns:
+        Full path like "checkpoints/v6/run_20241204_143022/generated.npy"
+    """
+    run_dir = get_run_dir()
+    os.makedirs(run_dir, exist_ok=True)
+
+    if CONFIG["auto_name_runs"]:
+        # Include timestamp in filename too for clarity
+        timestamp = get_run_id().replace("run_", "")
+        filename = f"{base_name}_{timestamp}{extension}"
+    else:
+        filename = f"{base_name}{extension}"
+
+    return os.path.join(run_dir, filename)
+
+
+def get_tensorboard_dir():
+    """Get TensorBoard log directory for this run."""
+    return os.path.join(get_run_dir(), "logs")
 
 
 # ==============================================================================
@@ -139,7 +206,9 @@ def get_config():
     config.log_interval = CONFIG["log_interval"]
     config.eval_interval = CONFIG["eval_interval"]
     config.save_interval = CONFIG["save_interval"]
-    config.checkpoint_dir = CONFIG["checkpoint_dir"]
+
+    # Use run-specific directory for checkpoints
+    config.checkpoint_dir = get_run_dir()
 
     return config
 
@@ -157,6 +226,15 @@ def print_config():
     print("-" * 40)
     for key, value in CONFIG.items():
         print(f"  {key}: {value}")
+
+    # Show run-specific paths
+    if CONFIG["auto_name_runs"]:
+        print()
+        print("Run-specific paths:")
+        print("-" * 40)
+        print(f"  Run ID: {get_run_id()}")
+        print(f"  Run directory: {get_run_dir()}")
+        print(f"  TensorBoard: {get_tensorboard_dir()}")
     print()
 
 
@@ -215,7 +293,9 @@ def run_train():
     print(f"  Converged: {metrics['stage1'].get('converged', 'N/A')}")
     print(f"\nStage 2 Results:")
     print(f"  Wasserstein Distance: {metrics['stage2'].get('wasserstein', 'N/A'):.4f}")
-    print(f"\nCheckpoints saved to: {CONFIG['checkpoint_dir']}")
+    print(f"\nOutputs saved to: {get_run_dir()}")
+    print(f"  Checkpoints: {get_run_dir()}/*.pt")
+    print(f"  TensorBoard: {get_tensorboard_dir()}")
 
     return model, metrics
 
@@ -683,14 +763,15 @@ def run_export_samples():
     if samples is None:
         return None
 
-    # Export
-    output_file = CONFIG["output_file"]
+    # Export with auto-naming
+    output_file = get_output_path("generated_samples", ".npz")
     np.savez(
         output_file,
         samples=samples,
         conditions=conditions,
         seq_len=CONFIG["seq_len"],
-        n_samples=CONFIG["n_samples"]
+        n_samples=CONFIG["n_samples"],
+        run_id=get_run_id()
     )
 
     print(f"\nExported to: {output_file}")
@@ -834,8 +915,8 @@ def run_visualize():
 
     plt.tight_layout()
 
-    # Save figure
-    output_file = CONFIG["viz_output_file"]
+    # Save figure with auto-naming
+    output_file = get_output_path("trajectory_comparison", ".png")
     plt.savefig(output_file, dpi=150, bbox_inches='tight')
     print(f"\nSaved visualization to: {output_file}")
 
