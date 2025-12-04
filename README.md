@@ -11,12 +11,14 @@ A PyTorch implementation of conditional trajectory generation using a novel two-
 - [Quick Start](#quick-start)
 - [Data Format](#data-format)
 - [Usage Guide](#usage-guide)
+- [Hyperparameter Optimization](#hyperparameter-optimization)
 - [Configuration](#configuration)
 - [Training Pipeline](#training-pipeline)
 - [Evaluation Metrics](#evaluation-metrics)
 - [Project Structure](#project-structure)
 - [API Reference](#api-reference)
 - [Troubleshooting](#troubleshooting)
+- [Development Status](#development-status)
 
 ---
 
@@ -320,6 +322,112 @@ trajectories = model.generate(100, conditions, seq_len=100)
 
 ---
 
+## Hyperparameter Optimization
+
+TimeGAN V6 includes a full Optuna-based hyperparameter optimization pipeline (`optuna_optimize_v6.py`) for automated tuning of both stages.
+
+### Quick Start
+
+```bash
+# Stage 1 optimization (autoencoder)
+python optuna_optimize_v6.py --stage 1 --n-trials 50 --data-dir ./processed_data_v4
+
+# Stage 2 optimization (requires Stage 1 checkpoint)
+python optuna_optimize_v6.py --stage 2 --n-trials 100 \
+    --stage1-checkpoint checkpoints/optuna/stage1_trial_0/best_model.pt
+
+# Full pipeline (Stage 1 → Stage 2)
+python optuna_optimize_v6.py --stage both --n-trials 50
+
+# Analyze results
+python optuna_optimize_v6.py --analyze --study-name timegan_v6_stage1
+```
+
+### Search Spaces
+
+#### Stage 1 (Autoencoder)
+
+| Parameter | Search Range | Type |
+|-----------|--------------|------|
+| `latent_dim` | [32, 48, 64, 96] | Categorical |
+| `summary_dim` | [64, 96, 128, 192] | Categorical |
+| `pool_type` | [attention, mean, last, hybrid] | Categorical |
+| `expand_type` | [lstm, mlp, repeat] | Categorical |
+| `lr` | [1e-5, 1e-2] | Log uniform |
+| `lr_schedule` | [none, cosine, step, plateau] | Categorical |
+| `lambda_recon` | [0.5, 2.0] | Uniform |
+| `lambda_latent` | [0.1, 1.0] | Uniform |
+
+#### Stage 2 (WGAN-GP)
+
+| Parameter | Search Range | Type |
+|-----------|--------------|------|
+| `noise_dim` | [64, 128, 192, 256] | Categorical |
+| `generator_hidden_dims` | Various MLP configs | Categorical |
+| `discriminator_hidden_dims` | Various MLP configs | Categorical |
+| `lr_G`, `lr_D` | [1e-5, 1e-3] | Log uniform |
+| `n_critic` | [1, 10] | Integer |
+| `lambda_gp` | [1.0, 50.0] | Log uniform |
+| `use_feature_matching` | [True, False] | Categorical |
+
+### Optimization Objectives
+
+**Stage 1** (Multi-objective):
+1. Reconstruction MSE (minimize)
+2. Latent space quality (minimize)
+
+**Stage 2** (Multi-objective):
+1. MMD between real/fake latents (minimize)
+2. Discriminative score (minimize → 0.5)
+
+### Features
+
+- **TPE Sampler**: Tree-structured Parzen Estimator for efficient search
+- **Hyperband Pruner**: Early stopping of unpromising trials
+- **Pareto Front**: Multi-objective optimization finds tradeoff solutions
+- **Resume Support**: Studies are saved to SQLite database
+- **Baseline Enqueuing**: Known good configs tried first
+- **Visualization**: Exports plots (param importance, Pareto front, etc.)
+
+### Output Structure
+
+```
+checkpoints/optuna/
+├── stage1_trial_0/
+│   └── best_model.pt
+├── stage1_trial_1/
+│   └── best_model.pt
+├── ...
+└── stage2_trial_0/
+    └── best_model.pt
+
+v6_optuna.db              # SQLite study database
+runs/optuna/optuna.log    # Optimization log
+plots/
+├── param_importances.html
+├── pareto_front.html
+└── optimization_history.html
+```
+
+### Programmatic Usage
+
+```python
+from optuna_optimize_v6 import OptunaConfig, StudyManager, Stage1Objective
+from data_loader_v6 import create_stage1_loader
+
+config = OptunaConfig(data_dir="./processed_data_v4", device="cuda")
+loader = create_stage1_loader(config.data_dir, batch_size=64)
+
+objective = Stage1Objective(config, loader)
+manager = StudyManager(config)
+study = manager.run_stage1(objective, n_trials=50)
+
+# Get best trial
+print(study.best_trials[0].params)
+```
+
+---
+
 ## Configuration
 
 ### CONFIG Options
@@ -544,6 +652,7 @@ Latent Coverage:      0.89 (higher is better)
 ```
 v6/
 ├── run_v6.py                    # Master control script (START HERE)
+├── optuna_optimize_v6.py        # Hyperparameter optimization with Optuna
 ├── README.md                    # This file
 ├── V6_RTSGAN_IMPLEMENTATION_PLAN.md  # Detailed architecture doc
 │
@@ -756,6 +865,72 @@ Or use the helper:
 ```bash
 python view_tensorboard.py --logdir checkpoints/v6/run_XXXXXX/logs
 ```
+
+---
+
+## Development Status
+
+### Implementation Complete
+
+The following components are fully implemented and tested:
+
+| Component | File | Status |
+|-----------|------|--------|
+| **Core Model** | `timegan_v6/model_v6.py` | ✅ Complete |
+| **Configuration** | `timegan_v6/config_model_v6.py` | ✅ Complete |
+| **Trainer** | `timegan_v6/trainer_v6.py` | ✅ Complete |
+| **Evaluation** | `timegan_v6/evaluation_v6.py` | ✅ Complete |
+| **Pooler** (attention/mean/last/hybrid) | `timegan_v6/pooler_v6.py` | ✅ Complete |
+| **Expander** (LSTM/MLP/repeat) | `timegan_v6/expander_v6.py` | ✅ Complete |
+| **Generator** (standard/FiLM) | `timegan_v6/latent_generator_v6.py` | ✅ Complete |
+| **Discriminator** (standard/projection/multiscale) | `timegan_v6/latent_discriminator_v6.py` | ✅ Complete |
+| **Data Loader V6** | `data_loader_v6.py` | ✅ Complete |
+| **Master Script** | `run_v6.py` | ✅ Complete |
+| **Optuna Optimization** | `optuna_optimize_v6.py` | ✅ Complete |
+
+### Key Implementation Details
+
+**Two-Stage RTSGAN Architecture**:
+- Stage 1: Autoencoder trained to convergence (encoder → pooler → expander → decoder)
+- Stage 2: WGAN-GP in frozen latent space (generator + discriminator)
+- Autoencoder is frozen during Stage 2 to ensure stable latent representations
+
+**Data Loading Optimizations**:
+- `LengthAwareSampler`: Groups similar-length sequences to reduce padding (30%+ efficiency)
+- `ConditionStratifiedSampler`: Ensures uniform condition distribution for Stage 2
+- Quality filtering removes outlier trajectories using Z-score threshold
+
+**V4 Data Compatibility**:
+- V6 uses the same preprocessed data format as V4 (8 features: dx, dy, speed, accel, sin_h, cos_h, ang_vel, dt)
+- No new preprocessing required - `processed_data_v4/` works directly
+
+### File Quick Reference
+
+| To Do This... | Use This File |
+|---------------|---------------|
+| Run training/evaluation/generation | `run_v6.py` |
+| Optimize hyperparameters | `optuna_optimize_v6.py` |
+| Understand model architecture | `timegan_v6/model_v6.py` |
+| Modify training loop | `timegan_v6/trainer_v6.py` |
+| Change model config | `timegan_v6/config_model_v6.py` |
+| Add evaluation metrics | `timegan_v6/evaluation_v6.py` |
+| Modify data loading | `data_loader_v6.py` |
+| Preprocess raw data | `preprocess_v4.py` |
+
+### Continuation Notes for Future Development
+
+When resuming development in a new session:
+
+1. **Start with this README** - Contains complete architecture and usage documentation
+2. **Check `run_v6.py`** - Master control script with all run modes
+3. **Review `timegan_v6/__init__.py`** - Shows all exported classes/functions
+4. **Data uses V4 format** - 8 features, normalized to [-1, 1], uses `processed_data_v4/`
+
+**Common next steps**:
+- To train: Set `RUN_MODE = "train"` in `run_v6.py`
+- To optimize hyperparameters: Run `python optuna_optimize_v6.py --stage 1`
+- To evaluate: Set `RUN_MODE = "evaluate"` with checkpoint path
+- To add new features: Check component files in `timegan_v6/`
 
 ---
 
