@@ -19,14 +19,10 @@ Usage:
     # Train both stages
     trainer.train(train_loader)
 
-    # Or manual control:
-    # Stage 1: Autoencoder
-    x_recon, losses = model.forward_autoencoder(x_real, lengths)
-
-    # Stage 2: GAN
-    model.freeze_autoencoder()
-    d_losses = model.forward_discriminator(x_real, condition, lengths)
-    g_losses = model.forward_generator(batch_size, condition)
+    # Evaluate
+    from timegan_v6 import TimeGANV6Evaluator
+    evaluator = TimeGANV6Evaluator(model)
+    metrics = evaluator.evaluate(real_data, conditions, lengths)
 
     # Generate
     x_fake = model.generate(n_samples, conditions)
@@ -80,6 +76,13 @@ from .losses_v6 import (
     diversity_loss
 )
 
+# Phase 4: Evaluation
+from .evaluation_v6 import (
+    TimeGANV6Evaluator,
+    quick_evaluate,
+    print_evaluation_report
+)
+
 __all__ = [
     # Main model and trainer
     'TimeGANV6',
@@ -91,6 +94,11 @@ __all__ = [
     'get_default_config',
     'get_fast_config',
     'get_large_config',
+
+    # Evaluation (Phase 4)
+    'TimeGANV6Evaluator',
+    'quick_evaluate',
+    'print_evaluation_report',
 
     # Core components (Phase 1)
     'LatentPooler',
