@@ -190,7 +190,7 @@ def run_train_stage1():
     print_config()
 
     from timegan_v6 import TimeGANV6, TimeGANV6Trainer
-    from utils import create_stage1_loader
+    from data_loader_v6 import create_stage1_loader
 
     config = get_config()
 
@@ -233,7 +233,7 @@ def run_train_stage2():
     print_config()
 
     from timegan_v6 import TimeGANV6, TimeGANV6Trainer
-    from utils import create_stage2_loader
+    from data_loader_v6 import create_stage2_loader
 
     config = get_config()
 
@@ -279,7 +279,7 @@ def run_resume():
     print_config()
 
     from timegan_v6 import TimeGANV6, TimeGANV6Trainer
-    from utils import create_stage1_loader, create_stage2_loader
+    from data_loader_v6 import create_stage1_loader, create_stage2_loader
 
     config = get_config()
 
@@ -377,7 +377,7 @@ def run_evaluate():
     print_config()
 
     from timegan_v6 import TimeGANV6, TimeGANV6Evaluator, print_evaluation_report
-    from utils import load_v6_data
+    from data_loader_v6 import load_v6_data
 
     config = get_config()
     model = TimeGANV6(config)
@@ -445,7 +445,7 @@ def run_quick_test():
 
     # Quick training
     from timegan_v6 import TimeGANV6, TimeGANV6Config, TimeGANV6Trainer, get_fast_config
-    from utils import create_stage_loaders
+    from data_loader_v6 import create_stage_loaders
 
     config = get_fast_config()
     config.device = CONFIG["device"]
@@ -495,7 +495,7 @@ def run_validate_data():
     print_header("TimeGAN V6 - Validate Data")
     print_config()
 
-    from utils import validate_v6_data, load_v6_data
+    from data_loader_v6 import validate_v6_data, load_v6_data
 
     try:
         validate_v6_data(CONFIG["data_dir"])

@@ -19,7 +19,7 @@ Uses V4 preprocessed data format:
         [7] dt       - Time delta (s)
 
 Usage:
-    from utils.data_loader_v6 import create_dataloaders_v6, create_stage_loaders
+    from data_loader_v6 import create_dataloaders_v6, create_stage_loaders
 
     # Full pipeline
     train_loader, val_loader, test_loader = create_dataloaders_v6(data_dir)

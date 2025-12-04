@@ -703,7 +703,7 @@ def train_v6_optimized(data_dir: str, config: TimeGANV6Config = None,
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-    from utils.data_loader_v6 import create_stage1_loader, create_stage2_loader, validate_v6_data
+    from data_loader_v6 import create_stage1_loader, create_stage2_loader, validate_v6_data
 
     # Validate data
     validate_v6_data(data_dir)
