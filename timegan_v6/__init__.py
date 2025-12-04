@@ -9,11 +9,17 @@ Key insight: By training the autoencoder first, then training a WGAN generator
 in the frozen latent space, we eliminate the encoder-generator semantic gap.
 
 Usage:
-    from timegan_v6 import TimeGANV6, TimeGANV6Config
+    from timegan_v6 import TimeGANV6, TimeGANV6Config, TimeGANV6Trainer
 
+    # Setup
     config = TimeGANV6Config()
     model = TimeGANV6(config)
+    trainer = TimeGANV6Trainer(model, config)
 
+    # Train both stages
+    trainer.train(train_loader)
+
+    # Or manual control:
     # Stage 1: Autoencoder
     x_recon, losses = model.forward_autoencoder(x_real, lengths)
 
@@ -53,10 +59,33 @@ from .config_model_v6 import (
 )
 from .model_v6 import TimeGANV6
 
+# Phase 3: Training pipeline
+from .trainer_v6 import (
+    TimeGANV6Trainer,
+    create_trainer,
+    EarlyStopping,
+    MovingAverage
+)
+from .losses_v6 import (
+    reconstruction_loss,
+    latent_consistency_loss,
+    autoencoder_loss,
+    wasserstein_discriminator_loss,
+    wasserstein_generator_loss,
+    gradient_penalty_loss,
+    feature_matching_loss,
+    discriminator_loss,
+    generator_loss,
+    temporal_consistency_loss,
+    diversity_loss
+)
+
 __all__ = [
-    # Main model
+    # Main model and trainer
     'TimeGANV6',
     'TimeGANV6Config',
+    'TimeGANV6Trainer',
+    'create_trainer',
 
     # Configuration presets
     'get_default_config',
@@ -79,6 +108,23 @@ __all__ = [
     'compute_gradient_penalty_latent',
     'get_last_valid_output',
     'initialize_weights',
+
+    # Training helpers
+    'EarlyStopping',
+    'MovingAverage',
+
+    # Loss functions
+    'reconstruction_loss',
+    'latent_consistency_loss',
+    'autoencoder_loss',
+    'wasserstein_discriminator_loss',
+    'wasserstein_generator_loss',
+    'gradient_penalty_loss',
+    'feature_matching_loss',
+    'discriminator_loss',
+    'generator_loss',
+    'temporal_consistency_loss',
+    'diversity_loss',
 ]
 
 __version__ = '6.0.0'
