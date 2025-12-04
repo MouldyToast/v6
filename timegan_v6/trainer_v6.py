@@ -666,6 +666,109 @@ def create_trainer(config: TimeGANV6Config = None,
     return model, trainer
 
 
+def train_v6_optimized(data_dir: str, config: TimeGANV6Config = None,
+                       device: str = None, skip_stage1: bool = False,
+                       stage1_checkpoint: str = None) -> Tuple[TimeGANV6, Dict]:
+    """
+    Train TimeGAN V6 with stage-optimized data loading.
+
+    Uses:
+    - Length-aware batching for Stage 1 (reduced padding waste)
+    - Condition-stratified sampling for Stage 2 (uniform conditions)
+
+    This is the recommended way to train V6 for best results.
+
+    Args:
+        data_dir: Directory containing preprocessed V4/V6 data
+        config: TimeGANV6Config (uses defaults if None)
+        device: Device string ('cuda' or 'cpu')
+        skip_stage1: Skip Stage 1 (use pretrained autoencoder)
+        stage1_checkpoint: Path to Stage 1 checkpoint to load
+
+    Returns:
+        (model, metrics) tuple
+
+    Usage:
+        from timegan_v6 import train_v6_optimized
+
+        model, metrics = train_v6_optimized(
+            data_dir='processed_data_v4',
+            device='cuda'
+        )
+
+        # Generate samples
+        conditions = torch.rand(100, 1)
+        x_fake = model.generate(100, conditions)
+    """
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from data_loader_v6 import create_stage1_loader, create_stage2_loader, validate_v6_data
+
+    # Validate data
+    validate_v6_data(data_dir)
+
+    # Setup config
+    if config is None:
+        config = TimeGANV6Config()
+    if device is not None:
+        config.device = device
+
+    # Create model and trainer
+    model = TimeGANV6(config)
+    trainer = TimeGANV6Trainer(model, config)
+
+    # Load Stage 1 checkpoint if provided
+    if stage1_checkpoint:
+        print(f"Loading Stage 1 checkpoint: {stage1_checkpoint}")
+        trainer.load_checkpoint(stage1_checkpoint)
+        skip_stage1 = True
+
+    metrics = {'stage1': {}, 'stage2': {}}
+
+    # Stage 1: Autoencoder with length-aware batching
+    if not skip_stage1:
+        print("\n" + "=" * 60)
+        print("Loading Stage 1 data with LENGTH-AWARE BATCHING")
+        print("=" * 60)
+
+        stage1_loader = create_stage1_loader(
+            data_dir,
+            batch_size=config.batch_size,
+            num_workers=config.num_workers,
+            augment=True,
+            quality_filter=True
+        )
+
+        metrics['stage1'] = trainer.train_stage1(stage1_loader)
+    else:
+        print("Skipping Stage 1 (using pretrained autoencoder)")
+
+    # Stage 2: WGAN-GP with condition-stratified sampling
+    print("\n" + "=" * 60)
+    print("Loading Stage 2 data with CONDITION-STRATIFIED SAMPLING")
+    print("=" * 60)
+
+    stage2_loader = create_stage2_loader(
+        data_dir,
+        batch_size=config.batch_size,
+        num_workers=config.num_workers,
+        augment=False,  # No augmentation for GAN training
+        quality_filter=True
+    )
+
+    metrics['stage2'] = trainer.train_stage2(stage2_loader)
+
+    # Save final model
+    trainer._save_checkpoint('final.pt', stage=2)
+
+    print("\n" + "=" * 60)
+    print("Training Complete!")
+    print("=" * 60)
+
+    return model, metrics
+
+
 # ============================================================================
 # TEST CODE
 # ============================================================================

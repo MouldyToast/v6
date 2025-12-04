@@ -59,6 +59,7 @@ from .model_v6 import TimeGANV6
 from .trainer_v6 import (
     TimeGANV6Trainer,
     create_trainer,
+    train_v6_optimized,
     EarlyStopping,
     MovingAverage
 )
@@ -89,6 +90,7 @@ __all__ = [
     'TimeGANV6Config',
     'TimeGANV6Trainer',
     'create_trainer',
+    'train_v6_optimized',
 
     # Configuration presets
     'get_default_config',
