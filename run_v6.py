@@ -15,6 +15,7 @@ AVAILABLE MODES:
     "resume"             - Resume training from checkpoint
     "generate"           - Generate synthetic trajectories
     "evaluate"           - Evaluate trained model
+    "visualize"          - Visualize real vs generated trajectories
     "quick_test"         - Quick smoke test with synthetic data
     "validate_data"      - Validate preprocessed data directory
     "inspect_model"      - Print model architecture and parameter counts
@@ -56,10 +57,16 @@ CONFIG = {
     "data_dir": "processed_data_v4",          # Directory with preprocessed V4 data
 
     # ─── Checkpoint Paths ─────────────────────────────────────────────────────
+    # WINDOWS USERS: Use forward slashes or raw strings for paths!
+    #   Good: "D:/V6/checkpoints/v6"  or  r"D:\V6\checkpoints\v6"
+    #   Bad:  "D:\V6\checkpoints\v6"  (backslash = escape character)
+    # NOTE: Checkpoints must be .pt FILES, not directories!
+    #   Good: "checkpoints/v6/final.pt"
+    #   Bad:  "checkpoints/v6"
     "checkpoint_dir": "./checkpoints/v6",     # Where to save checkpoints
-    "stage1_checkpoint": None,                # Path to Stage 1 checkpoint (for stage2/resume)
-    "resume_checkpoint": None,                # Path to checkpoint for resuming training
-    "eval_checkpoint": None,                  # Path to checkpoint for evaluation/generation
+    "stage1_checkpoint": None,                # .pt file for Stage 2 training (e.g., "checkpoints/v6/stage1_final.pt")
+    "resume_checkpoint": None,                # .pt file to resume from (e.g., "checkpoints/v6/stage2_iter5000.pt")
+    "eval_checkpoint": None,                  # .pt file for eval/generate (e.g., "checkpoints/v6/final.pt")
 
     # ─── Device ───────────────────────────────────────────────────────────────
     "device": "cuda" if torch.cuda.is_available() else "cpu",
@@ -83,6 +90,11 @@ CONFIG = {
     "n_samples": 100,                         # Number of samples to generate
     "seq_len": 100,                           # Sequence length for generation
     "output_file": "generated_samples.npy",   # Output file for exports
+
+    # ─── Visualization Parameters ─────────────────────────────────────────────
+    "viz_n_samples": 5,                       # Number of trajectories to visualize
+    "viz_output_file": "trajectory_comparison.png",  # Output image file
+    "viz_show_plot": True,                    # Show plot interactively (set False for headless)
 
     # ─── Quick Test Parameters ────────────────────────────────────────────────
     "quick_test_iterations": 50,              # Very short training for testing
@@ -146,6 +158,34 @@ def print_config():
     for key, value in CONFIG.items():
         print(f"  {key}: {value}")
     print()
+
+
+def validate_checkpoint_path(path, config_key):
+    """
+    Validate that a checkpoint path is a valid .pt file.
+
+    Returns (is_valid, error_message)
+    """
+    if path is None:
+        return False, f"ERROR: {config_key} must be set in CONFIG"
+
+    if not os.path.exists(path):
+        return False, f"ERROR: File not found: {path}"
+
+    if os.path.isdir(path):
+        # Common mistake: pointing to directory instead of file
+        pt_files = [f for f in os.listdir(path) if f.endswith('.pt')]
+        if pt_files:
+            suggestion = os.path.join(path, pt_files[0])
+            return False, (f"ERROR: {path} is a directory, not a file!\n"
+                          f"  Did you mean: {suggestion}\n"
+                          f"  Available .pt files: {pt_files}")
+        return False, f"ERROR: {path} is a directory, not a .pt file"
+
+    if not path.endswith('.pt'):
+        return False, f"WARNING: {path} doesn't have .pt extension (may still work)"
+
+    return True, None
 
 
 # ==============================================================================
@@ -322,9 +362,11 @@ def run_generate():
     """Generate synthetic trajectories from trained model."""
     print_header("TimeGAN V6 - Generate Trajectories")
 
-    if CONFIG["eval_checkpoint"] is None:
-        print("ERROR: eval_checkpoint must be set in CONFIG")
-        print("Set CONFIG['eval_checkpoint'] = 'path/to/final.pt'")
+    # Validate checkpoint path
+    is_valid, error_msg = validate_checkpoint_path(CONFIG["eval_checkpoint"], "eval_checkpoint")
+    if not is_valid:
+        print(error_msg)
+        print("\nSet CONFIG['eval_checkpoint'] = 'path/to/final.pt'")
         return None
 
     print_config()
@@ -659,6 +701,159 @@ def run_export_samples():
 
 
 # ==============================================================================
+# MODE: visualize - Visualize Real vs Generated Trajectories
+# ==============================================================================
+
+def run_visualize():
+    """Visualize real vs generated trajectories side by side."""
+    print_header("TimeGAN V6 - Visualization: Real vs Generated")
+
+    # Validate checkpoint
+    is_valid, error_msg = validate_checkpoint_path(CONFIG["eval_checkpoint"], "eval_checkpoint")
+    if not is_valid:
+        print(error_msg)
+        print("\nSet CONFIG['eval_checkpoint'] = 'path/to/final.pt'")
+        return None
+
+    print_config()
+
+    try:
+        import matplotlib
+        if not CONFIG["viz_show_plot"]:
+            matplotlib.use('Agg')  # Headless mode
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("ERROR: matplotlib is required for visualization")
+        print("Install with: pip install matplotlib")
+        return None
+
+    from timegan_v6 import TimeGANV6
+    from data_loader_v6 import load_v6_data
+
+    config = get_config()
+    model = TimeGANV6(config)
+
+    # Load checkpoint
+    print("Loading model...")
+    checkpoint = torch.load(CONFIG["eval_checkpoint"], map_location=CONFIG["device"])
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.to(CONFIG["device"])
+    model.eval()
+
+    # Load real data
+    print("Loading real data...")
+    data = load_v6_data(CONFIG["data_dir"])
+    X_real = data['X_test']
+    C_real = data['C_test']
+    L_real = data['L_test']
+
+    n_viz = min(CONFIG["viz_n_samples"], len(X_real))
+
+    # Select random samples
+    indices = np.random.choice(len(X_real), n_viz, replace=False)
+
+    # Generate fake samples with matching conditions
+    conditions = torch.FloatTensor(C_real[indices]).unsqueeze(-1).to(CONFIG["device"])
+
+    print(f"Generating {n_viz} synthetic trajectories...")
+    with torch.no_grad():
+        X_fake = model.generate(n_viz, conditions, seq_len=X_real.shape[1])
+    X_fake = X_fake.cpu().numpy()
+
+    # Feature names for V4 format
+    feature_names = ['dx', 'dy', 'speed', 'accel', 'sin_h', 'cos_h', 'ang_vel', 'dt']
+
+    # Create visualization
+    fig, axes = plt.subplots(n_viz, 4, figsize=(16, 4 * n_viz))
+    if n_viz == 1:
+        axes = axes.reshape(1, -1)
+
+    for i, idx in enumerate(indices):
+        length = L_real[idx]
+        real = X_real[idx, :length, :]
+        fake = X_fake[i, :length, :]
+        condition = C_real[idx]
+
+        # Plot 1: XY trajectory (reconstructed from dx, dy)
+        ax = axes[i, 0]
+        real_x = np.cumsum(real[:, 0])
+        real_y = np.cumsum(real[:, 1])
+        fake_x = np.cumsum(fake[:, 0])
+        fake_y = np.cumsum(fake[:, 1])
+        ax.plot(real_x, real_y, 'b-', label='Real', linewidth=2, alpha=0.8)
+        ax.plot(fake_x, fake_y, 'r--', label='Generated', linewidth=2, alpha=0.8)
+        ax.scatter([real_x[0]], [real_y[0]], c='green', s=100, marker='o', zorder=5, label='Start')
+        ax.scatter([real_x[-1]], [real_y[-1]], c='blue', s=100, marker='x', zorder=5)
+        ax.scatter([fake_x[-1]], [fake_y[-1]], c='red', s=100, marker='x', zorder=5)
+        ax.set_title(f'Sample {i+1} - XY Trajectory (cond={condition:.2f})')
+        ax.set_xlabel('X position')
+        ax.set_ylabel('Y position')
+        ax.legend(loc='best')
+        ax.axis('equal')
+        ax.grid(True, alpha=0.3)
+
+        # Plot 2: Speed over time
+        ax = axes[i, 1]
+        time = np.arange(length)
+        ax.plot(time, real[:, 2], 'b-', label='Real', linewidth=2, alpha=0.8)
+        ax.plot(time, fake[:, 2], 'r--', label='Generated', linewidth=2, alpha=0.8)
+        ax.set_title('Speed over Time')
+        ax.set_xlabel('Time step')
+        ax.set_ylabel('Speed (normalized)')
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+
+        # Plot 3: Feature distributions
+        ax = axes[i, 2]
+        features_to_compare = [0, 1, 2, 3]  # dx, dy, speed, accel
+        positions = np.arange(len(features_to_compare))
+        width = 0.35
+        real_means = [real[:, f].mean() for f in features_to_compare]
+        fake_means = [fake[:, f].mean() for f in features_to_compare]
+        real_stds = [real[:, f].std() for f in features_to_compare]
+        fake_stds = [fake[:, f].std() for f in features_to_compare]
+        ax.bar(positions - width/2, real_means, width, yerr=real_stds, label='Real', color='blue', alpha=0.7, capsize=3)
+        ax.bar(positions + width/2, fake_means, width, yerr=fake_stds, label='Generated', color='red', alpha=0.7, capsize=3)
+        ax.set_xticks(positions)
+        ax.set_xticklabels([feature_names[f] for f in features_to_compare])
+        ax.set_title('Feature Comparison (mean ± std)')
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3, axis='y')
+
+        # Plot 4: Heading (sin_h, cos_h as angle)
+        ax = axes[i, 3]
+        real_angle = np.arctan2(real[:, 4], real[:, 5])  # atan2(sin, cos)
+        fake_angle = np.arctan2(fake[:, 4], fake[:, 5])
+        ax.plot(time, np.degrees(real_angle), 'b-', label='Real', linewidth=2, alpha=0.8)
+        ax.plot(time, np.degrees(fake_angle), 'r--', label='Generated', linewidth=2, alpha=0.8)
+        ax.set_title('Heading Angle over Time')
+        ax.set_xlabel('Time step')
+        ax.set_ylabel('Angle (degrees)')
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    # Save figure
+    output_file = CONFIG["viz_output_file"]
+    plt.savefig(output_file, dpi=150, bbox_inches='tight')
+    print(f"\nSaved visualization to: {output_file}")
+
+    # Show if requested
+    if CONFIG["viz_show_plot"]:
+        print("Displaying plot (close window to continue)...")
+        plt.show()
+    else:
+        plt.close()
+
+    print("\n" + "=" * 70)
+    print(" VISUALIZATION COMPLETE!")
+    print("=" * 70)
+
+    return output_file
+
+
+# ==============================================================================
 # MAIN DISPATCHER
 # ==============================================================================
 
@@ -669,6 +864,7 @@ MODES = {
     "resume": run_resume,
     "generate": run_generate,
     "evaluate": run_evaluate,
+    "visualize": run_visualize,
     "quick_test": run_quick_test,
     "validate_data": run_validate_data,
     "inspect_model": run_inspect_model,
