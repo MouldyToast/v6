@@ -38,6 +38,9 @@ from datetime import datetime
 import numpy as np
 import torch
 
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -995,3 +998,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
