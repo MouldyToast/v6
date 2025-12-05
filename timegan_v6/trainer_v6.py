@@ -216,6 +216,7 @@ class TimeGANV6Trainer:
             # Get batch
             x_real, condition, lengths = next(data_iter)
             x_real = x_real.to(self.device)
+            condition = condition.to(self.device)
             lengths = lengths.to(self.device)
 
             # Forward pass
@@ -259,9 +260,10 @@ class TimeGANV6Trainer:
 
                 self._log_metrics('stage1', metrics, iteration)
 
-                # Log trajectory visualizations at eval_interval
+                # Log trajectory visualizations and embeddings at eval_interval
                 if iteration % self.config.eval_interval == 0:
                     self._log_trajectories('stage1', x_real, x_recon, lengths, iteration)
+                    self._log_embeddings(x_real, condition, lengths, iteration)
 
                 if callback:
                     callback(self, iteration, metrics)
@@ -441,8 +443,9 @@ class TimeGANV6Trainer:
 
             # Evaluation and visualization
             if iteration % self.config.eval_interval == 0:
-                # Log generated trajectory visualizations
+                # Log generated trajectory visualizations and embeddings
                 self._log_generated_trajectories(x_real, condition, lengths, iteration)
+                self._log_embeddings(x_real, condition, lengths, iteration)
 
                 if val_loader is not None:
                     eval_metrics = self.evaluate(val_loader)
@@ -798,6 +801,44 @@ class TimeGANV6Trainer:
         plt.tight_layout()
         self.writer.add_figure('stage2/generated_trajectories', fig, step)
         plt.close(fig)
+
+    def _log_embeddings(self, x_real: torch.Tensor, condition: torch.Tensor,
+                        lengths: torch.Tensor, step: int, n_samples: int = 200):
+        """
+        Log latent embeddings to TensorBoard projector.
+
+        Visualizes z_summary vectors colored by condition value.
+        View in TensorBoard under "Projector" tab.
+        """
+        if self.writer is None:
+            return
+
+        # Limit samples for performance
+        n = min(n_samples, x_real.size(0))
+
+        self.model.eval()
+        with torch.no_grad():
+            # Encode to latent summaries
+            z_summary = self.model.encode(x_real[:n], lengths[:n])
+        self.model.train()
+
+        # Create metadata (condition values and lengths)
+        cond_np = condition[:n].detach().cpu().numpy()
+        lengths_np = lengths[:n].detach().cpu().numpy()
+
+        # Format metadata as list of strings
+        metadata = []
+        for i in range(n):
+            cond_val = cond_np[i, 0] if cond_np.ndim > 1 else cond_np[i]
+            metadata.append(f"cond={cond_val:.2f}_len={int(lengths_np[i])}")
+
+        # Log embeddings with metadata
+        self.writer.add_embedding(
+            z_summary,
+            metadata=metadata,
+            tag='latent_space',
+            global_step=step
+        )
 
     def get_model(self) -> TimeGANV6:
         """Get the model."""
