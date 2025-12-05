@@ -10,6 +10,31 @@ import matplotlib.pyplot as plt
 from data_loader_v6 import load_v6_data
 
 
+# ============================================================================
+# CONFIGURATION - ADJUST THESE TO TUNE PAUSE DETECTION
+# ============================================================================
+
+# Speed threshold (normalized space: -1.0 = slowest, 0.0 = medium, +1.0 = fastest)
+# Lower values (like -0.8) = more aggressive trimming (catches slower pauses)
+# Higher values (like -0.3) = more conservative (only trims very slow pauses)
+SPEED_THRESHOLD = -0.7  # Try: -0.8 for ~30 timesteps, -0.7 for ~40, -0.6 for ~50
+
+# Number of consecutive points that must exceed threshold
+# Lower values (3) = trigger earlier, more sensitive
+# Higher values (10) = require more sustained movement, more conservative
+WINDOW_SIZE = 3  # Try: 3 for early trigger, 5 for balanced, 10 for conservative
+
+# Maximum timesteps to search for movement start (limits where detection can occur)
+# If pause not found in first N timesteps, keeps entire trajectory
+# Set to None to search entire trajectory
+MAX_SEARCH_TIMESTEPS = 60  # Try: 40 for ~30ts, 50 for ~40ts, 60 for ~50ts, None for unlimited
+
+# Minimum points that must remain after trimming (prevents over-trimming)
+MIN_REMAINING_POINTS = 20
+
+# ============================================================================
+
+
 def detect_movement_start(x, y, t, speed_threshold=50, window_size=5, min_movement_points=10):
     """
     Detect where real movement begins by finding sustained speed above threshold.
@@ -82,9 +107,11 @@ def analyze_and_trim_trajectories(data_dir, speed_threshold=50, window_size=5):
     print("="*70)
     print(" Initial Pause Detection Analysis")
     print("="*70)
-    print(f"\nSettings:")
-    print(f"  Speed threshold: {speed_threshold} px/s")
-    print(f"  Window size: {window_size} consecutive points")
+    print(f"\nConfiguration:")
+    print(f"  Speed threshold (normalized): {SPEED_THRESHOLD}")
+    print(f"  Window size: {WINDOW_SIZE} consecutive points")
+    print(f"  Max search timesteps: {MAX_SEARCH_TIMESTEPS if MAX_SEARCH_TIMESTEPS else 'unlimited'}")
+    print(f"  Min remaining points: {MIN_REMAINING_POINTS}")
     print(f"  Data directory: {data_dir}")
     print()
 
@@ -134,21 +161,25 @@ def analyze_and_trim_trajectories(data_dir, speed_threshold=50, window_size=5):
             # The speed feature is already computed, so let's use that instead
             speed_normalized = traj[:, 2]
 
-            # Detect movement using normalized speed
-            # Adjust threshold for normalized data (speeds are normalized to [-1, 1])
-            # A speed of 0.0 (normalized) is medium, -1.0 is low, +1.0 is high
-            # We want to detect when speed is consistently above a low threshold
-            norm_threshold = -0.5  # Start when speed rises above -0.5 (normalized)
-
+            # Detect movement using normalized speed (use global config parameters)
             start_idx = 0
             pause_found = False
 
-            # Find first point where speed exceeds threshold for window_size consecutive points
-            for j in range(len(speed_normalized) - window_size):
-                if np.all(speed_normalized[j:j+window_size] > norm_threshold):
-                    start_idx = j
-                    pause_found = True
-                    break
+            # Determine search range
+            if MAX_SEARCH_TIMESTEPS is None:
+                search_range = len(speed_normalized) - WINDOW_SIZE
+            else:
+                search_range = min(MAX_SEARCH_TIMESTEPS, len(speed_normalized) - WINDOW_SIZE)
+
+            # Find first point where speed exceeds threshold for WINDOW_SIZE consecutive points
+            for j in range(max(0, search_range)):
+                if np.all(speed_normalized[j:j+WINDOW_SIZE] > SPEED_THRESHOLD):
+                    # Check if enough points remain after trimming
+                    remaining = length - j
+                    if remaining >= MIN_REMAINING_POINTS:
+                        start_idx = j
+                        pause_found = True
+                        break
 
             if pause_found and start_idx > 0:
                 pause_detected += 1
@@ -228,12 +259,9 @@ def visualize_pause_examples(data_dir, n_examples=3):
     X_train = data['X_train']
     L_train = data['L_train']
 
-    # Find examples with pauses and without
+    # Find examples with pauses and without (use global config parameters)
     examples_with_pause = []
     examples_without_pause = []
-
-    norm_threshold = -0.5
-    window_size = 5
 
     for i in range(len(X_train)):
         if len(examples_with_pause) >= n_examples and len(examples_without_pause) >= n_examples:
@@ -242,14 +270,23 @@ def visualize_pause_examples(data_dir, n_examples=3):
         length = L_train[i]
         speed = X_train[i, :length, 2]
 
-        # Check for pause
+        # Check for pause using same logic as analysis
         start_idx = 0
         pause_found = False
-        for j in range(len(speed) - window_size):
-            if np.all(speed[j:j+window_size] > norm_threshold):
-                start_idx = j
-                pause_found = True
-                break
+
+        # Determine search range
+        if MAX_SEARCH_TIMESTEPS is None:
+            search_range = len(speed) - WINDOW_SIZE
+        else:
+            search_range = min(MAX_SEARCH_TIMESTEPS, len(speed) - WINDOW_SIZE)
+
+        for j in range(max(0, search_range)):
+            if np.all(speed[j:j+WINDOW_SIZE] > SPEED_THRESHOLD):
+                remaining = length - j
+                if remaining >= MIN_REMAINING_POINTS:
+                    start_idx = j
+                    pause_found = True
+                    break
 
         if pause_found and start_idx > 5 and len(examples_with_pause) < n_examples:
             examples_with_pause.append((i, start_idx, length))
@@ -284,7 +321,10 @@ def visualize_pause_examples(data_dir, n_examples=3):
         ax.plot(timesteps, traj[:, 2], 'b-', alpha=0.5, label='Speed')
         if start_idx > 0:
             ax.axvline(start_idx, color='orange', linestyle='--', linewidth=2, label='Movement start')
-            ax.axhspan(-1, norm_threshold, color='red', alpha=0.1, label='Pause threshold')
+            ax.axhspan(-1, SPEED_THRESHOLD, color='red', alpha=0.1, label=f'Pause threshold ({SPEED_THRESHOLD})')
+        # Show max search range if limited
+        if MAX_SEARCH_TIMESTEPS is not None:
+            ax.axvline(MAX_SEARCH_TIMESTEPS, color='gray', linestyle=':', alpha=0.5, label=f'Max search ({MAX_SEARCH_TIMESTEPS})')
         ax.set_xlabel('Timestep')
         ax.set_ylabel('Speed (normalized)')
         ax.set_title(f'Speed over Time (trimmed {start_idx} pts)')
