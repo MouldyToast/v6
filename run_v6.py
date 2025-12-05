@@ -68,16 +68,16 @@ CONFIG = {
     #   Good: "checkpoints/v6/final.pt"
     #   Bad:  "checkpoints/v6"
     "checkpoint_dir": "./checkpoints/v6",     # Where to save checkpoints
-    "stage1_checkpoint": None,                # .pt file for Stage 2 training (e.g., "checkpoints/v6/stage1_final.pt")
+    "stage1_checkpoint": "checkpoints/v6/stage1_final.pt",                # .pt file for Stage 2 training (e.g., "checkpoints/v6/stage1_final.pt")
     "resume_checkpoint": None,                # .pt file to resume from (e.g., "checkpoints/v6/stage2_iter5000.pt")
-    "eval_checkpoint": None,                  # .pt file for eval/generate (e.g., "checkpoints/v6/final.pt")
+    "eval_checkpoint": "checkpoints/v6/final.pt",                  # .pt file for eval/generate (e.g., "checkpoints/v6/final.pt")
 
     # ─── Device ───────────────────────────────────────────────────────────────
     "device": "cuda" if torch.cuda.is_available() else "cpu",
 
     # ─── Training Parameters ──────────────────────────────────────────────────
     "batch_size": 64,
-    "num_workers": 0,                         # Set to 4+ for faster loading on GPU
+    "num_workers": 4,                         # Set to 4+ for faster loading on GPU
 
     # Stage 1 (Autoencoder)
     "stage1_iterations": 15000,
@@ -998,4 +998,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
