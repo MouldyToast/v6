@@ -93,15 +93,14 @@ noise + condition ──→ [Generator] ──→ z_summary ──→ [Expander*
 
 ### Component Details
 
-| Component | Type | Parameters | Description |
+| Component | Type | Dimensions | Description |
 |-----------|------|------------|-------------|
-| **Encoder** | 3-layer LSTM | ~89K | Maps trajectories to latent sequences |
-| **Decoder** | 3-layer LSTM | ~96K | Reconstructs trajectories from latent |
-| **Pooler** | Attention | ~6K | Compresses sequence to summary vector |
-| **Expander** | 2-layer LSTM | ~328K | Expands summary back to sequence |
-| **Generator** | 3-layer MLP | ~259K | Produces latent summaries from noise |
-| **Discriminator** | 3-layer MLP | ~177K | WGAN critic in latent space |
-| **Total** | - | **~955K** | Full model parameters |
+| **Encoder** | 3-layer LSTM | 8 → latent_dim (64) | Maps trajectories to latent sequences |
+| **Decoder** | 3-layer LSTM | latent_dim → 8 | Reconstructs trajectories from latent |
+| **Pooler** | Hybrid (attn+mean+max) | latent_dim → summary_dim (192) | Compresses sequence to summary vector |
+| **Expander** | 2-layer LSTM | summary_dim → latent_dim | Reconstructs latent sequence from summary |
+| **Generator** | 3-layer MLP | noise+cond → summary_dim | Generates fake latent summaries |
+| **Discriminator** | 3-layer MLP | summary_dim → 1 | WGAN critic in latent space |
 
 ---
 
@@ -549,15 +548,22 @@ config = TimeGANV6Config(
 
 **Pipeline**:
 ```
+Main path (bottleneck):
 x_real → Encoder → h_seq → Pooler → z_summary → Expander → h_recon → Decoder → x_recon
+
+Direct path (encoder training):
+x_real → Encoder → h_seq → Decoder → x_direct
 ```
 
 **Losses**:
-- **Reconstruction Loss**: `L_recon = MSE(x_real, x_recon)` (masked for variable lengths)
-- **Latent Consistency Loss**: `L_latent = MSE(h_seq, h_recon)` (optional, helps stability)
-- **Total**: `L_total = L_recon + λ * L_latent`
+- **Direct Loss**: `L_direct = MSE(x_real, x_direct)` - Trains encoder directly (bypasses bottleneck)
+- **Reconstruction Loss**: `L_recon = MSE(x_real, x_recon)` - Trains bottleneck (pooler/expander)
+- **Latent Consistency Loss**: `L_latent = MSE(h_seq, h_recon)` - Expander matches encoder output
+- **Total**: `L_total = L_direct + L_recon + λ * L_latent`
 
-**Convergence**: Training continues until reconstruction loss drops below threshold (default: 0.05) and stays stable.
+**Why Direct Loss?** Without it, the encoder only gets gradients through the long path (encoder→pooler→expander→decoder), causing vanishing gradients. The direct path gives the encoder strong gradients like V4.
+
+**Convergence**: Training continues until direct loss drops below threshold (default: 0.05).
 
 ### Stage 2: WGAN-GP Training
 
@@ -859,25 +865,26 @@ CONFIG["stage2_iterations"] = 100
 #### Stage 1 (Autoencoder) - Normal Output
 
 ```
-[Stage 1] Iter    100/15000 | Recon: 0.4521 | Latent: 0.3812 | 45.2 it/s
-[Stage 1] Iter    500/15000 | Recon: 0.1823 | Latent: 0.1456 | 44.8 it/s
-[Stage 1] Iter   1000/15000 | Recon: 0.0892 | Latent: 0.0734 | 45.1 it/s
-[Stage 1] Iter   2000/15000 | Recon: 0.0523 | Latent: 0.0412 | 44.9 it/s
-[Stage 1] Iter   3000/15000 | Recon: 0.0398 | Latent: 0.0321 | 45.0 it/s
+[Stage 1] Iter    100/15000 | Direct: 0.3521 | Recon: 0.4521 | Latent: 0.2812 | 25.2 it/s
+[Stage 1] Iter    500/15000 | Direct: 0.1423 | Recon: 0.1823 | Latent: 0.0956 | 24.8 it/s
+[Stage 1] Iter   1000/15000 | Direct: 0.0792 | Recon: 0.0992 | Latent: 0.0534 | 25.1 it/s
+[Stage 1] Iter   2000/15000 | Direct: 0.0523 | Recon: 0.0623 | Latent: 0.0312 | 24.9 it/s
+[Stage 1] Iter   3000/15000 | Direct: 0.0398 | Recon: 0.0458 | Latent: 0.0221 | 25.0 it/s
 
 Converged at iteration 3500!
-Best reconstruction loss: 0.0385
+Best direct reconstruction loss: 0.0385
 ```
 
 **What to expect:**
-- Recon loss: Starts 0.3-0.5, drops to <0.05 for convergence
-- Latent loss: Follows similar pattern, usually slightly lower
-- Speed: 30-60 it/s on GPU, 5-15 it/s on CPU
+- **Direct loss**: Encoder quality - should decrease steadily to <0.05 (main convergence target)
+- **Recon loss**: Bottleneck quality - follows Direct, usually slightly higher
+- **Latent loss**: Expander matching encoder - should stay non-zero, decreases slowly
+- Speed: 20-40 it/s on GPU, 2-5 it/s on CPU
 - Convergence: Usually 3000-8000 iterations
 
 **Warning signs:**
-- Recon stuck >0.1 after 5000 iterations → Learning rate too low or data issue
-- Recon oscillating wildly → Learning rate too high
+- Direct stuck >0.1 after 5000 iterations → Learning rate too low or data issue
+- Latent → 0 very fast while Direct/Recon stay high → Expander outpacing encoder (lower LR)
 - NaN values → Exploding gradients, reduce lr or increase grad_clip
 
 #### Stage 2 (WGAN-GP) - Normal Output
@@ -989,17 +996,32 @@ config = TimeGANV6Config(
 **Diagnosis**: CPU bottleneck or small batch not utilizing GPU
 **Fix**: Increase `batch_size` (try 128 or 256), ensure `device='cuda'`, check `num_workers` (try 2-4 on Linux, 0 on Windows)
 
-### View TensorBoard Logs
+### TensorBoard Monitoring
 
+**Launch TensorBoard:**
 ```bash
-tensorboard --logdir checkpoints/v6/run_XXXXXX/logs
-# Open http://localhost:6006
+python view_tensorboard.py              # View all runs
+python view_tensorboard.py --list       # List available runs
+python view_tensorboard.py --latest 3   # View 3 most recent runs
+python view_tensorboard.py --runs run_20251205  # Specific run (partial match)
 ```
 
-Or use the helper:
-```bash
-python view_tensorboard.py --logdir checkpoints/v6/run_XXXXXX/logs
-```
+**Key Metrics (Scalars tab):**
+| Stage | Metric | Target | Description |
+|-------|--------|--------|-------------|
+| Stage 1 | `loss_direct` | < 0.05 | Encoder quality (main target) |
+| Stage 1 | `loss_recon` | follows direct | Bottleneck quality |
+| Stage 1 | `loss_latent` | stays non-zero | Expander tracking encoder |
+| Stage 2 | `wasserstein` | increases | GAN training progress |
+| Stage 2 | `d_loss` / `g_loss` | balanced | D and G competing |
+
+**Trajectory Visualizations (Images tab):**
+- `stage1/trajectories`: Real (blue) vs Reconstructed (red) - XY path, speed, error heatmap
+- `stage2/generated_trajectories`: Real (blue) vs Generated (green) - XY path, speed, feature means
+
+**Latent Space (Projector tab):**
+- `latent_space`: z_summary embeddings visualized with PCA/t-SNE/UMAP
+- Colored by condition value - similar conditions should cluster together
 
 ---
 
@@ -1066,6 +1088,15 @@ When resuming development in a new session:
 - To optimize hyperparameters: Run `python optuna_optimize_v6.py --stage 1`
 - To evaluate: Set `RUN_MODE = "evaluate"` with checkpoint path
 - To add new features: Check component files in `timegan_v6/`
+
+**IMPORTANT - Keep Documentation Updated**:
+When making code changes in a new session, **always update this README** to reflect:
+- New features or configuration options added
+- Changes to training behavior or expected output
+- New troubleshooting entries for issues encountered
+- Architecture changes (component dimensions, new modules, etc.)
+
+This ensures the next session has accurate context without needing to re-discover implementation details.
 
 ---
 
