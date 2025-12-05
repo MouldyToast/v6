@@ -854,6 +854,132 @@ CONFIG["stage1_iterations"] = 100
 CONFIG["stage2_iterations"] = 100
 ```
 
+### Expected Training Output
+
+#### Stage 1 (Autoencoder) - Normal Output
+
+```
+[Stage 1] Iter    100/15000 | Recon: 0.4521 | Latent: 0.3812 | 45.2 it/s
+[Stage 1] Iter    500/15000 | Recon: 0.1823 | Latent: 0.1456 | 44.8 it/s
+[Stage 1] Iter   1000/15000 | Recon: 0.0892 | Latent: 0.0734 | 45.1 it/s
+[Stage 1] Iter   2000/15000 | Recon: 0.0523 | Latent: 0.0412 | 44.9 it/s
+[Stage 1] Iter   3000/15000 | Recon: 0.0398 | Latent: 0.0321 | 45.0 it/s
+
+Converged at iteration 3500!
+Best reconstruction loss: 0.0385
+```
+
+**What to expect:**
+- Recon loss: Starts 0.3-0.5, drops to <0.05 for convergence
+- Latent loss: Follows similar pattern, usually slightly lower
+- Speed: 30-60 it/s on GPU, 5-15 it/s on CPU
+- Convergence: Usually 3000-8000 iterations
+
+**Warning signs:**
+- Recon stuck >0.1 after 5000 iterations → Learning rate too low or data issue
+- Recon oscillating wildly → Learning rate too high
+- NaN values → Exploding gradients, reduce lr or increase grad_clip
+
+#### Stage 2 (WGAN-GP) - Normal Output
+
+```
+[Stage 2] Iter    100/30000 | D: -2.3451 | G: 1.8923 | W: 2.1234 | 38.5 it/s
+[Stage 2] Iter   1000/30000 | D: -0.8234 | G: 0.7123 | W: 0.5821 | 38.2 it/s
+[Stage 2] Iter   5000/30000 | D: -0.2341 | G: 0.1892 | W: 0.1523 | 38.0 it/s
+[Stage 2] Iter  10000/30000 | D: -0.0823 | G: 0.0734 | W: 0.0456 | 37.8 it/s
+[Stage 2] Iter  20000/30000 | D: -0.0412 | G: 0.0389 | W: 0.0234 | 37.5 it/s
+```
+
+**Metric interpretation:**
+| Metric | Meaning | Good Range | Bad Signs |
+|--------|---------|------------|-----------|
+| D (d_loss) | Discriminator loss | -0.5 to 0.5 | Stuck at 0 or exploding |
+| G (g_loss) | Generator loss | -0.5 to 0.5 | Constantly increasing |
+| W (wasserstein) | Distribution distance | Decreasing → 0 | Stuck high or oscillating |
+
+**Warning signs:**
+- W not decreasing after 5000 iterations → Generator not learning
+- D loss = 0 constantly → Mode collapse, discriminator "won"
+- G loss constantly increasing → Generator diverging
+- NaN in any loss → Training collapsed, need different hyperparameters
+
+#### Evaluation Output - Interpreting Results
+
+```
+Evaluation Report
+─────────────────────────────────────────────
+Discriminative Score: 0.52 (ideal: 0.5)    ← EXCELLENT: Can't tell real from fake
+Predictive Score:     0.08                  ← GOOD: Temporal patterns preserved
+MMD Score:            0.003                 ← EXCELLENT: Distributions match
+Latent Coverage:      0.89                  ← GOOD: Diverse outputs
+─────────────────────────────────────────────
+```
+
+**Score interpretation:**
+| Metric | Excellent | Good | Needs Work | Poor |
+|--------|-----------|------|------------|------|
+| Discriminative | 0.50-0.55 | 0.55-0.65 | 0.65-0.75 | >0.75 |
+| Predictive | <0.1 | 0.1-0.5 | 0.5-1.0 | >1.0 |
+| MMD | <0.01 | 0.01-0.05 | 0.05-0.1 | >0.1 |
+| Latent Coverage | >0.85 | 0.7-0.85 | 0.5-0.7 | <0.5 |
+
+### Diagnosing Common Issues from Logs
+
+**Issue: Stage 1 loss not decreasing**
+```
+[Stage 1] Iter   1000/15000 | Recon: 0.4234 | Latent: 0.3891
+[Stage 1] Iter   2000/15000 | Recon: 0.4198 | Latent: 0.3845
+[Stage 1] Iter   3000/15000 | Recon: 0.4156 | Latent: 0.3802
+```
+**Diagnosis**: Learning rate too low
+**Fix**: Increase `lr_autoencoder` to 1e-3 or 5e-3
+
+**Issue: Stage 2 Wasserstein not decreasing**
+```
+[Stage 2] Iter   5000/30000 | D: -0.0012 | G: 0.0008 | W: 0.8923
+[Stage 2] Iter  10000/30000 | D: -0.0008 | G: 0.0005 | W: 0.8845
+```
+**Diagnosis**: Discriminator too strong, generator can't learn
+**Fix**: Decrease `n_critic` (try 3), or increase `lr_generator`
+
+**Issue: NaN in losses**
+```
+[Stage 2] Iter    500/30000 | D: nan | G: nan | W: nan
+```
+**Diagnosis**: Training exploded
+**Fix**: Lower learning rates, increase `grad_clip`, check data normalization
+
+**Issue: Mode collapse (D wins completely)**
+```
+[Stage 2] Iter   5000/30000 | D: 0.0000 | G: 15.234 | W: 0.0000
+```
+**Diagnosis**: Generator collapsed, only produces one output
+**Fix**: Increase `lambda_gp`, use `use_feature_matching=True`, reduce `n_critic`
+
+**Issue: Stage 1 Recon plateaued but Latent → 0**
+```
+[Stage 1] Iter   1000/15000 | Recon: 0.1421 | Latent: 0.0002
+[Stage 1] Iter   2000/15000 | Recon: 0.1410 | Latent: 0.0001
+[Stage 1] Iter   3000/15000 | Recon: 0.1405 | Latent: 0.0000
+```
+**Diagnosis**: Latent bottleneck too restrictive - pooler loses information when compressing to `summary_dim`. The expander reconstructs h_seq perfectly (latent→0), but the pooled representation can't capture enough detail.
+**Fix**: Increase `summary_dim` (try 128 or 192), use `pool_type='hybrid'`, or increase `lr_autoencoder` to 5e-3:
+```python
+from timegan_v6 import TimeGANV6Config
+config = TimeGANV6Config(
+    summary_dim=192,        # More capacity in bottleneck
+    pool_type='hybrid',     # Combines attention + mean pooling
+    lr_autoencoder=5e-3,    # Faster learning
+)
+```
+
+**Issue: Very slow training (< 5 it/s on GPU)**
+```
+[Stage 1] Iter    100/15000 | Recon: 0.1593 | Latent: 0.0018 | 2.0 it/s
+```
+**Diagnosis**: CPU bottleneck or small batch not utilizing GPU
+**Fix**: Increase `batch_size` (try 128 or 256), ensure `device='cuda'`, check `num_workers` (try 2-4 on Linux, 0 on Windows)
+
 ### View TensorBoard Logs
 
 ```bash
