@@ -809,6 +809,12 @@ class TimeGANV6Trainer:
 
         Visualizes z_summary vectors colored by condition value.
         View in TensorBoard under "Projector" tab.
+
+        Metadata columns (use 'Color by' dropdown in Projector):
+        - condition: Raw condition value [-1, 1]
+        - length: Sequence length
+        - cond_bin: Categorical bin (very_short/short/medium/long/very_long)
+        - length_bin: Categorical bin (short/medium/long)
         """
         if self.writer is None:
             return
@@ -826,16 +832,50 @@ class TimeGANV6Trainer:
         cond_np = condition[:n].detach().cpu().numpy()
         lengths_np = lengths[:n].detach().cpu().numpy()
 
-        # Format metadata as list of strings
+        # Discretize conditions into bins for categorical coloring
+        # Condition represents target distance, normalized to [-1, 1]
+        def cond_to_bin(c):
+            if c < -0.6:
+                return 'very_short'
+            elif c < -0.2:
+                return 'short'
+            elif c < 0.2:
+                return 'medium'
+            elif c < 0.6:
+                return 'long'
+            else:
+                return 'very_long'
+
+        # Discretize lengths into bins based on distribution
+        len_median = np.median(lengths_np)
+        len_std = np.std(lengths_np) if np.std(lengths_np) > 0 else 1.0
+        def length_to_bin(l):
+            if l < len_median - len_std:
+                return 'short'
+            elif l > len_median + len_std:
+                return 'long'
+            else:
+                return 'medium'
+
+        # Build structured metadata as list of lists
+        # TensorBoard expects: list of [col1_val, col2_val, ...] for each point
+        metadata_header = ['condition', 'length', 'cond_bin', 'length_bin']
         metadata = []
         for i in range(n):
             cond_val = cond_np[i, 0] if cond_np.ndim > 1 else cond_np[i]
-            metadata.append(f"cond={cond_val:.2f}_len={int(lengths_np[i])}")
+            length_val = int(lengths_np[i])
+            metadata.append([
+                f"{cond_val:.3f}",           # condition (numeric as string)
+                str(length_val),              # length
+                cond_to_bin(cond_val),        # categorical bin for coloring
+                length_to_bin(length_val)     # categorical bin for coloring
+            ])
 
-        # Log embeddings with metadata
+        # Log embeddings with structured metadata
         self.writer.add_embedding(
             z_summary,
             metadata=metadata,
+            metadata_header=metadata_header,
             tag='latent_space',
             global_step=step
         )
