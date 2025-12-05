@@ -78,7 +78,7 @@ CONFIG = {
 
     # Stage 1 (Autoencoder)
     "stage1_iterations": 15000,
-    "lr_autoencoder": 1e-3,
+    "lr_autoencoder": 5e-4,                   # Lowered from 1e-3 to prevent expander outpacing encoder
     "stage1_threshold": 0.05,                 # Convergence threshold
 
     # Stage 2 (WGAN-GP)
@@ -119,7 +119,7 @@ CONFIG = {
     # Architecture overrides (set to None to use preset defaults)
     "summary_dim": 192,                       # Bottleneck size (default: 96, try 128-256 if loss plateaus)
     "pool_type": "hybrid",                    # "attention", "mean", "last", "hybrid"
-    "latent_dim": None,                       # Per-timestep latent (default: 48)
+    "latent_dim": 64,                         # Per-timestep latent (default: 48, increased for more encoder capacity)
     "expand_type": None,                      # "lstm", "mlp", "repeat"
 }
 
