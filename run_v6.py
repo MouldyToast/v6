@@ -113,8 +113,14 @@ CONFIG = {
     #   - TensorBoard logs to: checkpoint_dir/run_YYYYMMDD_HHMMSS/logs/
     #   - Outputs named: generated_YYYYMMDD_HHMMSS.npy, viz_YYYYMMDD_HHMMSS.png
 
-    # ─── Model Architecture (usually leave as default) ────────────────────────
+    # ─── Model Architecture ──────────────────────────────────────────────────
     "config_preset": "default",               # "default", "fast", or "large"
+
+    # Architecture overrides (set to None to use preset defaults)
+    "summary_dim": 192,                       # Bottleneck size (default: 96, try 128-256 if loss plateaus)
+    "pool_type": "hybrid",                    # "attention", "mean", "last", "hybrid"
+    "latent_dim": None,                       # Per-timestep latent (default: 48)
+    "expand_type": None,                      # "lstm", "mlp", "repeat"
 }
 
 
@@ -209,6 +215,16 @@ def get_config():
 
     # Use run-specific directory for checkpoints
     config.checkpoint_dir = get_run_dir()
+
+    # Architecture overrides (fix for latent bottleneck issues)
+    if CONFIG["summary_dim"] is not None:
+        config.summary_dim = CONFIG["summary_dim"]
+    if CONFIG["pool_type"] is not None:
+        config.pool_type = CONFIG["pool_type"]
+    if CONFIG["latent_dim"] is not None:
+        config.latent_dim = CONFIG["latent_dim"]
+    if CONFIG["expand_type"] is not None:
+        config.expand_type = CONFIG["expand_type"]
 
     return config
 
