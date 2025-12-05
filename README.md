@@ -956,20 +956,29 @@ Latent Coverage:      0.89                  ← GOOD: Diverse outputs
 **Diagnosis**: Generator collapsed, only produces one output
 **Fix**: Increase `lambda_gp`, use `use_feature_matching=True`, reduce `n_critic`
 
-**Issue: Stage 1 Recon plateaued but Latent → 0**
+**Issue: Stage 1 Recon plateaued but Latent → 0 (very fast)**
 ```
-[Stage 1] Iter   1000/15000 | Recon: 0.1421 | Latent: 0.0002
-[Stage 1] Iter   2000/15000 | Recon: 0.1410 | Latent: 0.0001
-[Stage 1] Iter   3000/15000 | Recon: 0.1405 | Latent: 0.0000
+[Stage 1] Iter    100/15000 | Recon: 0.1586 | Latent: 0.0020
+[Stage 1] Iter    200/15000 | Recon: 0.1422 | Latent: 0.0003
+[Stage 1] Iter    400/15000 | Recon: 0.1427 | Latent: 0.0002
 ```
-**Diagnosis**: Latent bottleneck too restrictive - pooler loses information when compressing to `summary_dim`. The expander reconstructs h_seq perfectly (latent→0), but the pooled representation can't capture enough detail.
-**Fix**: Increase `summary_dim` (try 128 or 192), use `pool_type='hybrid'`, or increase `lr_autoencoder` to 5e-3:
+**Diagnosis**: The **expander is learning faster than the encoder**. Latent loss→0 means the expander matches h_seq perfectly, but h_seq itself is still random/low-quality because the encoder hasn't learned. The gradients weaken and training stagnates.
+**Fix**: Lower the learning rate to slow down the expander, and increase encoder capacity:
+```python
+# In run_v6.py CONFIG:
+"lr_autoencoder": 5e-4,      # Lowered from 1e-3
+"latent_dim": 64,            # Increased from 48 for more encoder capacity
+"summary_dim": 192,          # Larger bottleneck
+"pool_type": "hybrid",       # Better information preservation
+```
+Or in code:
 ```python
 from timegan_v6 import TimeGANV6Config
 config = TimeGANV6Config(
-    summary_dim=192,        # More capacity in bottleneck
-    pool_type='hybrid',     # Combines attention + mean pooling
-    lr_autoencoder=5e-3,    # Faster learning
+    lr_autoencoder=5e-4,    # Slower learning to prevent expander dominance
+    latent_dim=64,          # More encoder capacity
+    summary_dim=192,        # Larger bottleneck
+    pool_type='hybrid',     # Combines attention + mean + max pooling
 )
 ```
 
