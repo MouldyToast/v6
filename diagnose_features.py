@@ -6,7 +6,7 @@ This helps identify which specific features are causing the high discriminative 
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-from timegan_v6 import TimeGANV6
+from timegan_v6 import TimeGANV6, TimeGANV6Config
 from data_loader_v6 import load_v6_data
 
 # Configuration
@@ -24,7 +24,14 @@ print()
 # Load model
 print("Loading model...")
 checkpoint = torch.load(CHECKPOINT_PATH, map_location='cuda')
-config = checkpoint['config']
+config_dict = checkpoint['config']
+
+# Reconstruct config object from dict
+if isinstance(config_dict, dict):
+    config = TimeGANV6Config(**config_dict)
+else:
+    config = config_dict
+
 model = TimeGANV6(config)
 model.load_state_dict(checkpoint['model_state_dict'])
 model.eval()
