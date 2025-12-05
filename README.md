@@ -1089,6 +1089,15 @@ When resuming development in a new session:
 - To evaluate: Set `RUN_MODE = "evaluate"` with checkpoint path
 - To add new features: Check component files in `timegan_v6/`
 
+**IMPORTANT - Keep Documentation Updated**:
+When making code changes in a new session, **always update this README** to reflect:
+- New features or configuration options added
+- Changes to training behavior or expected output
+- New troubleshooting entries for issues encountered
+- Architecture changes (component dimensions, new modules, etc.)
+
+This ensures the next session has accurate context without needing to re-discover implementation details.
+
 ---
 
 ## Citation
