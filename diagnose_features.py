@@ -6,13 +6,19 @@ This helps identify which specific features are causing the high discriminative 
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-from timegan_v6 import TimeGANV6, TimeGANV6Config
+from timegan_v6 import TimeGANV6, get_default_config
 from data_loader_v6 import load_v6_data
 
 # Configuration
 CHECKPOINT_PATH = "./checkpoints/v6/run_20251205_100119/final.pt"
 DATA_DIR = "processed_data_v4"
 N_SAMPLES = 1000  # Number of samples to generate for comparison
+
+# Model architecture config (must match your training config!)
+SUMMARY_DIM = 192
+POOL_TYPE = "hybrid"
+LATENT_DIM = 64
+EXPAND_TYPE = "mlp"
 
 FEATURE_NAMES = ['dx', 'dy', 'speed', 'accel', 'sin_h', 'cos_h', 'ang_vel', 'dt']
 
@@ -21,22 +27,25 @@ print(" Feature-Level Diagnostic Analysis")
 print("="*70)
 print()
 
-# Load model
+# Load model (same way as run_v6.py)
 print("Loading model...")
-checkpoint = torch.load(CHECKPOINT_PATH, map_location='cuda')
-config_dict = checkpoint['config']
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# Reconstruct config object from dict
-if isinstance(config_dict, dict):
-    config = TimeGANV6Config(**config_dict)
-else:
-    config = config_dict
+# Create config (same as get_config() in run_v6.py)
+config = get_default_config()
+config.summary_dim = SUMMARY_DIM
+config.pool_type = POOL_TYPE
+config.latent_dim = LATENT_DIM
+config.expand_type = EXPAND_TYPE
+config.device = device
 
 model = TimeGANV6(config)
+
+# Load checkpoint weights
+checkpoint = torch.load(CHECKPOINT_PATH, map_location=device)
 model.load_state_dict(checkpoint['model_state_dict'])
+model.to(device)
 model.eval()
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = model.to(device)
 
 # Load real data
 print("Loading real test data...")
