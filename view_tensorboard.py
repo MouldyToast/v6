@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """
-TensorBoard Viewer for V4 Training Runs
+TensorBoard Viewer for TimeGAN V6 Training Runs
 
 Utility script to launch TensorBoard and compare training sessions.
+
+V6 Directory Structure:
+    checkpoints/v6/
+        run_20251204_143022/        # Auto-named run directory
+            stage1_final.pt         # Checkpoints
+            stage2_final.pt
+            logs/                   # TensorBoard logs (or directly in run dir)
+                events.out.tfevents.*
 
 Usage:
     python view_tensorboard.py                    # View all runs
@@ -12,72 +20,97 @@ Usage:
     python view_tensorboard.py --latest 3         # View only 3 most recent runs
 
 Features:
+    - Auto-discovers V6 run directories
     - Lists all available training runs with their metrics
     - Launches TensorBoard with proper configuration
     - Supports filtering runs for comparison
-    - Shows run metadata and hyperparameters
 """
 
 import os
 import sys
 import argparse
 import subprocess
-import json
 import webbrowser
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-# Default directories
-DEFAULT_TENSORBOARD_DIR = 'outputs_v4/tensorboard'
-DEFAULT_OUTPUT_DIR = 'outputs_v4'
+# V6 default directories
+DEFAULT_CHECKPOINT_DIR = './checkpoints/v6'
 
 
-def find_runs(tensorboard_dir: str) -> List[Dict[str, Any]]:
+def find_runs(checkpoint_dir: str) -> List[Dict[str, Any]]:
     """
-    Find all training runs in the tensorboard directory.
+    Find all V6 training runs in the checkpoint directory.
+
+    V6 runs are stored as:
+        checkpoint_dir/run_YYYYMMDD_HHMMSS/
+            - *.pt files (checkpoints)
+            - logs/ or events.out.tfevents.* (tensorboard)
 
     Returns list of dicts with run info: name, path, timestamp, etc.
     """
     runs = []
-    tb_path = Path(tensorboard_dir)
+    base_path = Path(checkpoint_dir)
 
-    if not tb_path.exists():
+    if not base_path.exists():
         return runs
 
-    for run_dir in tb_path.iterdir():
-        if run_dir.is_dir():
-            run_info = {
-                'name': run_dir.name,
-                'path': str(run_dir),
-                'created': None,
-                'events_file': None,
-                'size_mb': 0,
-            }
+    for run_dir in base_path.iterdir():
+        if not run_dir.is_dir():
+            continue
 
-            # Get creation time from directory
+        # Skip non-run directories
+        if not run_dir.name.startswith('run_'):
+            continue
+
+        run_info = {
+            'name': run_dir.name,
+            'path': str(run_dir),
+            'log_path': None,
+            'created': None,
+            'checkpoints': [],
+            'has_stage1': False,
+            'has_stage2': False,
+            'size_mb': 0,
+        }
+
+        # Parse timestamp from directory name (run_YYYYMMDD_HHMMSS)
+        try:
+            timestamp_str = run_dir.name.replace('run_', '')
+            run_info['created'] = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
+        except ValueError:
+            # Fall back to directory modification time
             try:
                 run_info['created'] = datetime.fromtimestamp(run_dir.stat().st_mtime)
             except:
                 pass
 
-            # Find event files and calculate size
-            total_size = 0
-            for f in run_dir.rglob('*'):
-                if f.is_file():
-                    total_size += f.stat().st_size
-                    if 'events.out.tfevents' in f.name:
-                        run_info['events_file'] = str(f)
+        # Find tensorboard logs (check logs/ subdir first, then run dir itself)
+        logs_dir = run_dir / 'logs'
+        if logs_dir.exists():
+            run_info['log_path'] = str(logs_dir)
+        else:
+            # Check if event files exist directly in run dir
+            event_files = list(run_dir.glob('events.out.tfevents.*'))
+            if event_files:
+                run_info['log_path'] = str(run_dir)
 
-            run_info['size_mb'] = total_size / (1024 * 1024)
+        # Find checkpoints and calculate size
+        total_size = 0
+        for f in run_dir.rglob('*'):
+            if f.is_file():
+                total_size += f.stat().st_size
+                if f.suffix == '.pt':
+                    run_info['checkpoints'].append(f.name)
+                    if 'stage1' in f.name:
+                        run_info['has_stage1'] = True
+                    if 'stage2' in f.name:
+                        run_info['has_stage2'] = True
 
-            # Try to extract experiment name from directory name
-            parts = run_info['name'].split('_')
-            if len(parts) >= 2:
-                # Format: experimentname_YYYYMMDD_HHMMSS_comment
-                run_info['experiment'] = parts[0]
+        run_info['size_mb'] = total_size / (1024 * 1024)
 
-            runs.append(run_info)
+        runs.append(run_info)
 
     # Sort by creation time (newest first)
     runs.sort(key=lambda x: x['created'] or datetime.min, reverse=True)
@@ -85,38 +118,47 @@ def find_runs(tensorboard_dir: str) -> List[Dict[str, Any]]:
     return runs
 
 
-def list_runs(tensorboard_dir: str, detailed: bool = False):
+def list_runs(checkpoint_dir: str, detailed: bool = False):
     """Print a formatted list of available runs."""
-    runs = find_runs(tensorboard_dir)
+    runs = find_runs(checkpoint_dir)
 
     if not runs:
-        print(f"\nNo runs found in {tensorboard_dir}")
-        print(f"Run training first: python train_v4.py --experiment_name my_experiment")
+        print(f"\nNo runs found in {checkpoint_dir}")
+        print(f"\nRun training first:")
+        print(f"  1. Edit run_v6.py: Set RUN_MODE = 'train'")
+        print(f"  2. Run: python run_v6.py")
         return
 
-    print("\n" + "=" * 80)
-    print("AVAILABLE TRAINING RUNS")
-    print("=" * 80)
-    print(f"\nTensorBoard directory: {tensorboard_dir}")
+    print("\n" + "=" * 90)
+    print("TIMEGAN V6 TRAINING RUNS")
+    print("=" * 90)
+    print(f"\nCheckpoint directory: {checkpoint_dir}")
     print(f"Total runs: {len(runs)}")
     print()
 
     # Table header
-    print(f"{'#':<3} {'Run Name':<45} {'Date':<20} {'Size':<10}")
-    print("-" * 80)
+    print(f"{'#':<3} {'Run Name':<30} {'Date':<18} {'Stage':<10} {'Logs':<6} {'Size':<10}")
+    print("-" * 90)
 
     for i, run in enumerate(runs, 1):
         date_str = run['created'].strftime('%Y-%m-%d %H:%M') if run['created'] else 'Unknown'
+
+        # Stage status
+        if run['has_stage2']:
+            stage = 'Stage 2'
+        elif run['has_stage1']:
+            stage = 'Stage 1'
+        else:
+            stage = 'Training'
+
+        # Logs status
+        logs_status = 'Yes' if run['log_path'] else 'No'
+
         size_str = f"{run['size_mb']:.1f} MB"
 
-        # Truncate long names
-        name = run['name']
-        if len(name) > 44:
-            name = name[:41] + '...'
+        print(f"{i:<3} {run['name']:<30} {date_str:<18} {stage:<10} {logs_status:<6} {size_str:<10}")
 
-        print(f"{i:<3} {name:<45} {date_str:<20} {size_str:<10}")
-
-    print("-" * 80)
+    print("-" * 90)
     print()
 
     if detailed:
@@ -125,18 +167,58 @@ def list_runs(tensorboard_dir: str, detailed: bool = False):
         for run in runs[:5]:  # Show details for 5 most recent
             print(f"\n  {run['name']}:")
             print(f"    Path: {run['path']}")
-            if run.get('experiment'):
-                print(f"    Experiment: {run['experiment']}")
+            print(f"    Logs: {run['log_path'] or 'None'}")
+            if run['checkpoints']:
+                print(f"    Checkpoints: {', '.join(run['checkpoints'][:3])}")
 
     print("\nTo view runs in TensorBoard:")
     print(f"  python view_tensorboard.py")
-    print(f"  python view_tensorboard.py --runs {runs[0]['name']}")
+    print(f"  python view_tensorboard.py --runs {runs[0]['name']}" if runs else "")
     print()
 
 
+def get_tensorboard_logdir(checkpoint_dir: str, run_names: Optional[List[str]] = None,
+                           latest_n: Optional[int] = None) -> str:
+    """
+    Build the logdir argument for TensorBoard.
+
+    Returns a comma-separated string of name:path pairs for multiple runs,
+    or a single directory path.
+    """
+    runs = find_runs(checkpoint_dir)
+
+    if not runs:
+        return checkpoint_dir
+
+    # Filter runs
+    if run_names:
+        # Filter to specific runs (partial match)
+        filtered = []
+        for run_name in run_names:
+            matches = [r for r in runs if run_name in r['name'] and r['log_path']]
+            filtered.extend(matches)
+        runs = filtered
+    elif latest_n:
+        runs = [r for r in runs if r['log_path']][:latest_n]
+    else:
+        runs = [r for r in runs if r['log_path']]
+
+    if not runs:
+        return checkpoint_dir
+
+    # If single run, just return log path
+    if len(runs) == 1:
+        return runs[0]['log_path']
+
+    # Multiple runs: build comma-separated name:path format
+    log_dirs = [f"{r['name']}:{r['log_path']}" for r in runs]
+    return ','.join(log_dirs)
+
+
 def launch_tensorboard(
-    tensorboard_dir: str,
+    checkpoint_dir: str,
     runs: Optional[List[str]] = None,
+    latest_n: Optional[int] = None,
     port: int = 6006,
     host: str = 'localhost',
     open_browser: bool = True,
@@ -146,53 +228,33 @@ def launch_tensorboard(
     Launch TensorBoard server.
 
     Args:
-        tensorboard_dir: Base directory containing runs
+        checkpoint_dir: Base directory containing runs
         runs: Optional list of specific run names to include
+        latest_n: Optional, only include N most recent runs
         port: Port to serve on
         host: Host to bind to
         open_browser: Whether to open browser automatically
         reload_interval: Seconds between data reloads
     """
-    # Determine log directory
-    if runs:
-        # Filter to specific runs
-        available = find_runs(tensorboard_dir)
-        available_names = {r['name'] for r in available}
-
-        # Build comma-separated logdir spec for multiple runs
-        log_dirs = []
-        for run_name in runs:
-            # Check if it's a full name or partial match
-            matches = [r for r in available if run_name in r['name']]
-            if matches:
-                for m in matches:
-                    log_dirs.append(f"{m['name']}:{m['path']}")
-            else:
-                print(f"Warning: Run '{run_name}' not found")
-
-        if not log_dirs:
-            print("Error: No matching runs found")
-            list_runs(tensorboard_dir)
-            return
-
-        logdir_arg = ','.join(log_dirs)
-    else:
-        logdir_arg = tensorboard_dir
+    logdir_arg = get_tensorboard_logdir(checkpoint_dir, runs, latest_n)
 
     url = f'http://{host}:{port}'
 
     print("\n" + "=" * 70)
-    print("TENSORBOARD VIEWER")
+    print("TENSORBOARD VIEWER - TimeGAN V6")
     print("=" * 70)
     print(f"\nLog directory: {logdir_arg}")
     print(f"URL: {url}")
     print()
-    print("Useful tabs for comparing runs:")
-    print("  - SCALARS:  Compare training curves (loss, metrics)")
-    print("  - HPARAMS:  Compare hyperparameters and final metrics")
-    print("  - IMAGES:   View trajectory comparisons (real vs generated)")
-    print("  - HISTOGRAMS: Monitor weight/gradient distributions")
-    print("  - TEXT:     View config and run metadata")
+    print("Key metrics to watch:")
+    print("  Stage 1:")
+    print("    - stage1/loss_direct: Encoder quality (should -> 0.05)")
+    print("    - stage1/loss_recon:  Bottleneck quality (follows direct)")
+    print("    - stage1/loss_latent: Expander matching encoder")
+    print("  Stage 2:")
+    print("    - stage2/wasserstein: GAN training progress (should increase)")
+    print("    - stage2/d_loss:      Discriminator loss")
+    print("    - stage2/g_loss:      Generator loss")
     print()
     print("Press Ctrl+C to stop the server")
     print("=" * 70)
@@ -225,7 +287,6 @@ def launch_tensorboard(
         try:
             from tensorboard import main as tb_main
             import sys as _sys
-            # Set up argv for tensorboard
             original_argv = _sys.argv
             _sys.argv = ['tensorboard', '--logdir', logdir_arg, '--port', str(port),
                         '--host', host, '--reload_interval', str(reload_interval)]
@@ -233,7 +294,7 @@ def launch_tensorboard(
                 tb_main.run_main()
                 launched = True
             except SystemExit:
-                launched = True  # TensorBoard exits normally this way
+                launched = True
             finally:
                 _sys.argv = original_argv
         except ImportError:
@@ -251,7 +312,6 @@ def launch_tensorboard(
                               '--host', host, '--reload_interval', str(reload_interval)])
             url = tb.launch()
             print(f"TensorBoard started at {url}")
-            # Keep running
             import time
             while True:
                 time.sleep(1)
@@ -269,82 +329,33 @@ def launch_tensorboard(
         print("  pip install tensorboard")
 
 
-def compare_runs_summary(tensorboard_dir: str, run_names: List[str]):
-    """
-    Print a comparison summary of specified runs.
-
-    This reads the event files and extracts final metrics for comparison.
-    """
-    try:
-        from tensorboard.backend.event_processing import event_accumulator
-    except ImportError:
-        print("Note: Install tensorboard for detailed comparison: pip install tensorboard")
-        return
-
-    runs = find_runs(tensorboard_dir)
-
-    print("\n" + "=" * 70)
-    print("RUN COMPARISON SUMMARY")
-    print("=" * 70)
-
-    for run_name in run_names:
-        matches = [r for r in runs if run_name in r['name']]
-
-        for run in matches:
-            print(f"\n{run['name']}:")
-            print("-" * 50)
-
-            if not run['events_file']:
-                print("  No event data found")
-                continue
-
-            try:
-                ea = event_accumulator.EventAccumulator(run['path'])
-                ea.Reload()
-
-                # Get available scalars
-                scalar_tags = ea.Tags().get('scalars', [])
-
-                # Key metrics to show
-                key_metrics = [
-                    'Phase3/v4_score', 'Global/v4_score',
-                    'Phase3/val_recon', 'Phase3/val_var', 'Phase3/val_cond',
-                    'Final/best_v4_score', 'Final/training_time_min'
-                ]
-
-                for tag in key_metrics:
-                    if tag in scalar_tags:
-                        events = ea.Scalars(tag)
-                        if events:
-                            last_value = events[-1].value
-                            print(f"  {tag}: {last_value:.6f}")
-
-            except Exception as e:
-                print(f"  Error reading events: {e}")
-
-    print("\n" + "=" * 70)
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description='View and compare TensorBoard training runs',
+        description='View and compare TimeGAN V6 TensorBoard training runs',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   %(prog)s                          # Launch TensorBoard with all runs
   %(prog)s --list                   # List available runs
   %(prog)s --list --detailed        # List with more details
-  %(prog)s --runs baseline test     # Compare specific runs
+  %(prog)s --runs run_20251204      # View specific run (partial match)
   %(prog)s --latest 3               # View only 3 most recent runs
   %(prog)s --port 6007              # Use different port
   %(prog)s --no-browser             # Don't auto-open browser
+
+V6 Directory Structure:
+  checkpoints/v6/
+      run_20251204_143022/
+          stage1_final.pt
+          stage2_final.pt
+          logs/                     # TensorBoard events
         """
     )
 
     parser.add_argument(
-        '--tensorboard_dir', '-d',
-        default=DEFAULT_TENSORBOARD_DIR,
-        help=f'TensorBoard logs directory (default: {DEFAULT_TENSORBOARD_DIR})'
+        '--checkpoint-dir', '-d',
+        default=DEFAULT_CHECKPOINT_DIR,
+        help=f'Checkpoint directory (default: {DEFAULT_CHECKPOINT_DIR})'
     )
 
     parser.add_argument(
@@ -369,12 +380,6 @@ Examples:
         '--latest', '-n',
         type=int,
         help='Only include N most recent runs'
-    )
-
-    parser.add_argument(
-        '--compare', '-c',
-        nargs='+',
-        help='Print comparison summary for specified runs'
     )
 
     parser.add_argument(
@@ -405,39 +410,26 @@ Examples:
 
     args = parser.parse_args()
 
-    # Check if tensorboard directory exists
-    if not os.path.exists(args.tensorboard_dir):
-        print(f"\nTensorBoard directory not found: {args.tensorboard_dir}")
+    # Check if checkpoint directory exists
+    if not os.path.exists(args.checkpoint_dir):
+        print(f"\nCheckpoint directory not found: {args.checkpoint_dir}")
         print(f"\nTo create runs, train a model first:")
-        print(f"  python train_v4.py --experiment_name my_experiment")
+        print(f"  1. Edit run_v6.py: Set RUN_MODE = 'train'")
+        print(f"  2. Run: python run_v6.py")
         print(f"\nOr specify a different directory:")
-        print(f"  python view_tensorboard.py --tensorboard_dir /path/to/logs")
+        print(f"  python view_tensorboard.py --checkpoint-dir /path/to/checkpoints")
         return 1
 
     # List mode
     if args.list:
-        list_runs(args.tensorboard_dir, detailed=args.detailed)
+        list_runs(args.checkpoint_dir, detailed=args.detailed)
         return 0
-
-    # Compare mode
-    if args.compare:
-        compare_runs_summary(args.tensorboard_dir, args.compare)
-        return 0
-
-    # Determine which runs to include
-    runs_to_show = args.runs
-
-    if args.latest:
-        all_runs = find_runs(args.tensorboard_dir)
-        runs_to_show = [r['name'] for r in all_runs[:args.latest]]
-        if not runs_to_show:
-            print("No runs found")
-            return 1
 
     # Launch TensorBoard
     launch_tensorboard(
-        tensorboard_dir=args.tensorboard_dir,
-        runs=runs_to_show,
+        checkpoint_dir=args.checkpoint_dir,
+        runs=args.runs,
+        latest_n=args.latest,
         port=args.port,
         host=args.host,
         open_browser=not args.no_browser,
