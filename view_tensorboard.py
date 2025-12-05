@@ -36,8 +36,8 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 # V6 default directories
-DEFAULT_CHECKPOINT_DIR = './checkpoints/v6'
-
+#DEFAULT_CHECKPOINT_DIR = './checkpoints/v6'
+DEFAULT_CHECKPOINT_DIR = r'D:\V6\checkpoints\v6'
 
 def find_runs(checkpoint_dir: str) -> List[Dict[str, Any]]:
     """
@@ -181,10 +181,17 @@ def get_tensorboard_logdir(checkpoint_dir: str, run_names: Optional[List[str]] =
                            latest_n: Optional[int] = None) -> str:
     """
     Build the logdir argument for TensorBoard.
-
-    Returns a comma-separated string of name:path pairs for multiple runs,
-    or a single directory path.
+    
+    FIXED: Defaults to returning the root directory if no filters are active,
+    avoiding Windows path parsing errors with multiple absolute paths.
     """
+    # 1. CRITICAL FIX: If no specific runs are requested (User wants ALL runs),
+    # return the root directory. This mimics the working V4 logic.
+    # It avoids generating a massive string like "run1:D:/path,run2:D:/path..."
+    # which fails on Windows due to the drive letter colon.
+    if not run_names and not latest_n:
+        return checkpoint_dir
+
     runs = find_runs(checkpoint_dir)
 
     if not runs:
@@ -210,7 +217,7 @@ def get_tensorboard_logdir(checkpoint_dir: str, run_names: Optional[List[str]] =
     if len(runs) == 1:
         return runs[0]['log_path'].replace('\\', '/')
 
-    # Multiple runs: build comma-separated name:path format
+    # Multiple runs (Filtered): build comma-separated name:path format
     log_dirs = []
     for r in runs:
         log_path = r['log_path']
@@ -218,9 +225,15 @@ def get_tensorboard_logdir(checkpoint_dir: str, run_names: Optional[List[str]] =
         logs_subdir = os.path.join(log_path, 'logs')
         if os.path.exists(logs_subdir):
             log_path = logs_subdir
-        # Convert backslashes to forward slashes for TensorBoard compatibility (Windows fix)
+        
+        # Convert backslashes to forward slashes
         log_path = log_path.replace('\\', '/')
+        
+        # NOTE: On Windows, passing "Name:D:/Path" via command line can still be flaky
+        # due to the drive letter colon. If this fails for filtered runs, 
+        # considering using relative paths or strict quoting.
         log_dirs.append(f"{r['name']}:{log_path}")
+        
     return ','.join(log_dirs)
 
 
