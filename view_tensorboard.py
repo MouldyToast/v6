@@ -206,12 +206,21 @@ def get_tensorboard_logdir(checkpoint_dir: str, run_names: Optional[List[str]] =
     if not runs:
         return checkpoint_dir
 
-    # If single run, just return log path
+    # If single run, just return log path (with forward slashes for Windows compatibility)
     if len(runs) == 1:
-        return runs[0]['log_path']
+        return runs[0]['log_path'].replace('\\', '/')
 
     # Multiple runs: build comma-separated name:path format
-    log_dirs = [f"{r['name']}:{r['log_path']}" for r in runs]
+    log_dirs = []
+    for r in runs:
+        log_path = r['log_path']
+        # Ensure we're pointing to logs/ subfolder if it exists
+        logs_subdir = os.path.join(log_path, 'logs')
+        if os.path.exists(logs_subdir):
+            log_path = logs_subdir
+        # Convert backslashes to forward slashes for TensorBoard compatibility (Windows fix)
+        log_path = log_path.replace('\\', '/')
+        log_dirs.append(f"{r['name']}:{log_path}")
     return ','.join(log_dirs)
 
 
