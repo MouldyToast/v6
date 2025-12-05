@@ -198,6 +198,10 @@ class TimeGANV6(nn.Module):
         Pipeline:
             x_real → Encoder → h_seq → Pooler → z_summary → Expander → h_seq_recon → Decoder → x_recon
 
+        Also computes direct reconstruction (bypassing bottleneck) to give
+        encoder stronger gradients:
+            x_real → Encoder → h_seq → Decoder → x_direct
+
         Args:
             x_real: (batch, seq_len, feature_dim) - real trajectories
             lengths: (batch,) - sequence lengths
@@ -205,7 +209,7 @@ class TimeGANV6(nn.Module):
 
         Returns:
             x_recon: (batch, seq_len, feature_dim) - reconstructed trajectories
-            losses: Dict with 'recon' and 'latent' losses
+            losses: Dict with 'recon', 'latent', 'direct' losses
             (optionally) intermediates: Dict with intermediate tensors
         """
         batch_size, seq_len, _ = x_real.shape
@@ -219,17 +223,27 @@ class TimeGANV6(nn.Module):
         # Expand: z_summary → h_seq_recon
         h_seq_recon = self.expander(z_summary, seq_len)
 
-        # Decode: h_seq_recon → x_recon
+        # Decode through bottleneck: h_seq_recon → x_recon
         x_recon = self.decoder(h_seq_recon, lengths)
+
+        # Direct decode (bypass bottleneck): h_seq → x_direct
+        # This gives encoder direct gradients like V4, preventing vanishing gradients
+        x_direct = self.decoder(h_seq, lengths)
 
         # Compute losses
         loss_recon = masked_mse_loss(x_real, x_recon, lengths)
         loss_latent = masked_mse_loss(h_seq.detach(), h_seq_recon, lengths)
+        loss_direct = masked_mse_loss(x_real, x_direct, lengths)
 
+        # Total: direct loss trains encoder, recon+latent train bottleneck
+        lambda_direct = getattr(self.config, 'lambda_direct', 1.0)
         losses = {
             'recon': loss_recon,
             'latent': loss_latent,
-            'total': self.config.lambda_recon * loss_recon + self.config.lambda_latent * loss_latent
+            'direct': loss_direct,
+            'total': (self.config.lambda_recon * loss_recon +
+                     self.config.lambda_latent * loss_latent +
+                     lambda_direct * loss_direct)
         }
 
         if return_intermediates:

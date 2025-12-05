@@ -203,6 +203,7 @@ class TimeGANV6Trainer:
         # Moving averages for smooth logging
         loss_recon_avg = MovingAverage(100)
         loss_latent_avg = MovingAverage(100)
+        loss_direct_avg = MovingAverage(100)
 
         # Training loop
         self.model.train()
@@ -235,6 +236,7 @@ class TimeGANV6Trainer:
             # Update metrics
             loss_recon_avg.update(losses['recon'].item())
             loss_latent_avg.update(losses['latent'].item())
+            loss_direct_avg.update(losses['direct'].item())
 
             # Logging
             if iteration % self.config.log_interval == 0:
@@ -244,11 +246,12 @@ class TimeGANV6Trainer:
                 metrics = {
                     'loss_recon': loss_recon_avg.get(),
                     'loss_latent': loss_latent_avg.get(),
-                    'loss_total': loss_recon_avg.get() * self.config.lambda_recon +
-                                  loss_latent_avg.get() * self.config.lambda_latent
+                    'loss_direct': loss_direct_avg.get(),
+                    'loss_total': losses['total'].item()
                 }
 
                 print(f"[Stage 1] Iter {iteration:6d}/{self.config.stage1_iterations} | "
+                      f"Direct: {metrics['loss_direct']:.4f} | "
                       f"Recon: {metrics['loss_recon']:.4f} | "
                       f"Latent: {metrics['loss_latent']:.4f} | "
                       f"{iter_per_sec:.1f} it/s")
@@ -258,11 +261,11 @@ class TimeGANV6Trainer:
                 if callback:
                     callback(self, iteration, metrics)
 
-            # Check convergence
-            if loss_recon_avg.get() < self.config.stage1_threshold:
-                if early_stopping(loss_recon_avg.get(), iteration):
+            # Check convergence based on direct loss (encoder quality)
+            if loss_direct_avg.get() < self.config.stage1_threshold:
+                if early_stopping(loss_direct_avg.get(), iteration):
                     print(f"\nConverged at iteration {iteration}!")
-                    print(f"Best reconstruction loss: {early_stopping.best:.4f}")
+                    print(f"Best direct reconstruction loss: {early_stopping.best:.4f}")
                     break
 
             # Checkpointing
@@ -273,8 +276,9 @@ class TimeGANV6Trainer:
         final_metrics = {
             'loss_recon': loss_recon_avg.get(),
             'loss_latent': loss_latent_avg.get(),
+            'loss_direct': loss_direct_avg.get(),
             'iterations': iteration,
-            'converged': loss_recon_avg.get() < self.config.stage1_threshold
+            'converged': loss_direct_avg.get() < self.config.stage1_threshold
         }
 
         self.metrics['stage1'] = final_metrics
@@ -284,6 +288,7 @@ class TimeGANV6Trainer:
         self._save_checkpoint('stage1_final.pt', stage=1)
 
         print(f"\nStage 1 Complete!")
+        print(f"  Final direct loss: {final_metrics['loss_direct']:.4f}")
         print(f"  Final recon loss: {final_metrics['loss_recon']:.4f}")
         print(f"  Converged: {final_metrics['converged']}")
         print("=" * 60)
