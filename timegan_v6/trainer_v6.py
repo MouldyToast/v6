@@ -258,6 +258,10 @@ class TimeGANV6Trainer:
 
                 self._log_metrics('stage1', metrics, iteration)
 
+                # Log trajectory visualizations at eval_interval
+                if iteration % self.config.eval_interval == 0:
+                    self._log_trajectories('stage1', x_real, x_recon, lengths, iteration)
+
                 if callback:
                     callback(self, iteration, metrics)
 
@@ -434,10 +438,14 @@ class TimeGANV6Trainer:
                 if callback:
                     callback(self, iteration, metrics)
 
-            # Evaluation
-            if iteration % self.config.eval_interval == 0 and val_loader is not None:
-                eval_metrics = self.evaluate(val_loader)
-                print(f"  [Eval] Recon MSE: {eval_metrics.get('recon_mse', 0):.4f}")
+            # Evaluation and visualization
+            if iteration % self.config.eval_interval == 0:
+                # Log generated trajectory visualizations
+                self._log_generated_trajectories(x_real, condition, lengths, iteration)
+
+                if val_loader is not None:
+                    eval_metrics = self.evaluate(val_loader)
+                    print(f"  [Eval] Recon MSE: {eval_metrics.get('recon_mse', 0):.4f}")
 
             # Checkpointing
             if iteration % self.config.save_interval == 0:
@@ -637,6 +645,158 @@ class TimeGANV6Trainer:
 
         for name, value in metrics.items():
             self.writer.add_scalar(f'{stage}/{name}', value, step)
+
+    def _log_trajectories(self, stage: str, x_real: torch.Tensor, x_recon: torch.Tensor,
+                          lengths: torch.Tensor, step: int, n_samples: int = 3):
+        """
+        Log trajectory visualizations to TensorBoard.
+
+        Creates side-by-side plots of real vs reconstructed/generated trajectories.
+        """
+        if self.writer is None:
+            return
+
+        try:
+            import matplotlib
+            matplotlib.use('Agg')  # Non-interactive backend
+            import matplotlib.pyplot as plt
+        except ImportError:
+            return
+
+        # Move to CPU and numpy
+        x_real_np = x_real[:n_samples].detach().cpu().numpy()
+        x_recon_np = x_recon[:n_samples].detach().cpu().numpy()
+        lengths_np = lengths[:n_samples].detach().cpu().numpy()
+
+        # Create figure with subplots for each sample
+        fig, axes = plt.subplots(n_samples, 3, figsize=(12, 4 * n_samples))
+        if n_samples == 1:
+            axes = axes.reshape(1, -1)
+
+        for i in range(n_samples):
+            length = int(lengths_np[i])
+            real = x_real_np[i, :length, :]
+            recon = x_recon_np[i, :length, :]
+
+            # Column 1: XY trajectory (cumsum of dx, dy)
+            ax = axes[i, 0]
+            real_x, real_y = np.cumsum(real[:, 0]), np.cumsum(real[:, 1])
+            recon_x, recon_y = np.cumsum(recon[:, 0]), np.cumsum(recon[:, 1])
+            ax.plot(real_x, real_y, 'b-', label='Real', linewidth=2, alpha=0.8)
+            ax.plot(recon_x, recon_y, 'r--', label='Recon', linewidth=2, alpha=0.8)
+            ax.scatter([real_x[0]], [real_y[0]], c='green', s=80, marker='o', zorder=5)
+            ax.set_title(f'Sample {i+1}: XY Trajectory')
+            ax.legend(loc='best', fontsize=8)
+            ax.axis('equal')
+            ax.grid(True, alpha=0.3)
+
+            # Column 2: Speed over time
+            ax = axes[i, 1]
+            time = np.arange(length)
+            ax.plot(time, real[:, 2], 'b-', label='Real', linewidth=1.5)
+            ax.plot(time, recon[:, 2], 'r--', label='Recon', linewidth=1.5)
+            ax.set_title('Speed')
+            ax.set_xlabel('Time')
+            ax.legend(loc='best', fontsize=8)
+            ax.grid(True, alpha=0.3)
+
+            # Column 3: Feature error heatmap
+            ax = axes[i, 2]
+            error = np.abs(real - recon)
+            feature_names = ['dx', 'dy', 'spd', 'acc', 'sin', 'cos', 'ang', 'dt']
+            im = ax.imshow(error.T, aspect='auto', cmap='hot', vmin=0, vmax=0.5)
+            ax.set_yticks(range(len(feature_names)))
+            ax.set_yticklabels(feature_names, fontsize=8)
+            ax.set_xlabel('Time')
+            ax.set_title(f'Abs Error (mean={error.mean():.3f})')
+            plt.colorbar(im, ax=ax, fraction=0.046)
+
+        plt.tight_layout()
+
+        # Log to TensorBoard
+        self.writer.add_figure(f'{stage}/trajectories', fig, step)
+        plt.close(fig)
+
+    def _log_generated_trajectories(self, x_real: torch.Tensor, condition: torch.Tensor,
+                                     lengths: torch.Tensor, step: int, n_samples: int = 3):
+        """
+        Log generated vs real trajectory visualizations to TensorBoard (Stage 2).
+        """
+        if self.writer is None:
+            return
+
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+        except ImportError:
+            return
+
+        # Generate fake trajectories with matching conditions
+        self.model.eval()
+        with torch.no_grad():
+            seq_len = x_real.size(1)
+            x_fake = self.model.generate(n_samples, condition[:n_samples], seq_len=seq_len)
+        self.model.train()
+
+        # Move to CPU and numpy
+        x_real_np = x_real[:n_samples].detach().cpu().numpy()
+        x_fake_np = x_fake[:n_samples].detach().cpu().numpy()
+        lengths_np = lengths[:n_samples].detach().cpu().numpy()
+        cond_np = condition[:n_samples].detach().cpu().numpy()
+
+        # Create figure
+        fig, axes = plt.subplots(n_samples, 3, figsize=(12, 4 * n_samples))
+        if n_samples == 1:
+            axes = axes.reshape(1, -1)
+
+        for i in range(n_samples):
+            length = int(lengths_np[i])
+            real = x_real_np[i, :length, :]
+            fake = x_fake_np[i, :length, :]
+            cond = cond_np[i, 0] if cond_np.ndim > 1 else cond_np[i]
+
+            # Column 1: XY trajectory
+            ax = axes[i, 0]
+            real_x, real_y = np.cumsum(real[:, 0]), np.cumsum(real[:, 1])
+            fake_x, fake_y = np.cumsum(fake[:, 0]), np.cumsum(fake[:, 1])
+            ax.plot(real_x, real_y, 'b-', label='Real', linewidth=2, alpha=0.8)
+            ax.plot(fake_x, fake_y, 'g--', label='Generated', linewidth=2, alpha=0.8)
+            ax.scatter([real_x[0]], [real_y[0]], c='blue', s=80, marker='o', zorder=5)
+            ax.scatter([fake_x[0]], [fake_y[0]], c='green', s=80, marker='o', zorder=5)
+            ax.set_title(f'Sample {i+1}: XY (cond={cond:.2f})')
+            ax.legend(loc='best', fontsize=8)
+            ax.axis('equal')
+            ax.grid(True, alpha=0.3)
+
+            # Column 2: Speed comparison
+            ax = axes[i, 1]
+            time = np.arange(length)
+            ax.plot(time, real[:, 2], 'b-', label='Real', linewidth=1.5)
+            ax.plot(time, fake[:, 2], 'g--', label='Generated', linewidth=1.5)
+            ax.set_title('Speed')
+            ax.set_xlabel('Time')
+            ax.legend(loc='best', fontsize=8)
+            ax.grid(True, alpha=0.3)
+
+            # Column 3: Feature distributions
+            ax = axes[i, 2]
+            feature_names = ['dx', 'dy', 'spd', 'acc']
+            x_pos = np.arange(len(feature_names))
+            width = 0.35
+            real_means = [real[:, j].mean() for j in range(4)]
+            fake_means = [fake[:, j].mean() for j in range(4)]
+            ax.bar(x_pos - width/2, real_means, width, label='Real', color='blue', alpha=0.7)
+            ax.bar(x_pos + width/2, fake_means, width, label='Generated', color='green', alpha=0.7)
+            ax.set_xticks(x_pos)
+            ax.set_xticklabels(feature_names)
+            ax.set_title('Feature Means')
+            ax.legend(loc='best', fontsize=8)
+            ax.grid(True, alpha=0.3, axis='y')
+
+        plt.tight_layout()
+        self.writer.add_figure('stage2/generated_trajectories', fig, step)
+        plt.close(fig)
 
     def get_model(self) -> TimeGANV6:
         """Get the model."""
