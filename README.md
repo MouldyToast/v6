@@ -956,6 +956,30 @@ Latent Coverage:      0.89                  ← GOOD: Diverse outputs
 **Diagnosis**: Generator collapsed, only produces one output
 **Fix**: Increase `lambda_gp`, use `use_feature_matching=True`, reduce `n_critic`
 
+**Issue: Stage 1 Recon plateaued but Latent → 0**
+```
+[Stage 1] Iter   1000/15000 | Recon: 0.1421 | Latent: 0.0002
+[Stage 1] Iter   2000/15000 | Recon: 0.1410 | Latent: 0.0001
+[Stage 1] Iter   3000/15000 | Recon: 0.1405 | Latent: 0.0000
+```
+**Diagnosis**: Latent bottleneck too restrictive - pooler loses information when compressing to `summary_dim`. The expander reconstructs h_seq perfectly (latent→0), but the pooled representation can't capture enough detail.
+**Fix**: Increase `summary_dim` (try 128 or 192), use `pool_type='hybrid'`, or increase `lr_autoencoder` to 5e-3:
+```python
+from timegan_v6 import TimeGANV6Config
+config = TimeGANV6Config(
+    summary_dim=192,        # More capacity in bottleneck
+    pool_type='hybrid',     # Combines attention + mean pooling
+    lr_autoencoder=5e-3,    # Faster learning
+)
+```
+
+**Issue: Very slow training (< 5 it/s on GPU)**
+```
+[Stage 1] Iter    100/15000 | Recon: 0.1593 | Latent: 0.0018 | 2.0 it/s
+```
+**Diagnosis**: CPU bottleneck or small batch not utilizing GPU
+**Fix**: Increase `batch_size` (try 128 or 256), ensure `device='cuda'`, check `num_workers` (try 2-4 on Linux, 0 on Windows)
+
 ### View TensorBoard Logs
 
 ```bash
