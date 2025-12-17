@@ -1,9 +1,9 @@
 """
-TimeGAN V6 Model - RTSGAN-Style Two-Stage Training
+TimeGAN v6 Model - RTSGAN-Style Two-Stage Training
 
 Main model wrapper that composes all components:
-- Encoder (from V6): Maps trajectories to latent sequences
-- Decoder (from V6): Maps latent sequences to trajectories
+- Encoder (from v6): Maps trajectories to latent sequences
+- Decoder (from v6): Maps latent sequences to trajectories
 - Pooler: Compresses latent sequences to summary vectors
 - Expander: Expands summary vectors to latent sequences
 - Generator: Produces latent summaries from noise + condition
@@ -15,11 +15,11 @@ The model supports three modes:
 3. Generation mode: Generate new trajectories
 
 Usage:
-    from timegan_v6.model_v6 import TimeGANV6
-    from timegan_v6.config_model_v6 import TimeGANV6Config
+    from timegan_v6.model_v6 import TimeGANv6
+    from timegan_v6.config_model_v6 import TimeGANv6Config
 
-    config = TimeGANV6Config()
-    model = TimeGANV6(config)
+    config = TimeGANv6Config()
+    model = TimeGANv6(config)
 
     # Stage 1: Autoencoder training
     x_recon, losses = model.forward_autoencoder(x_real, lengths)
@@ -40,7 +40,7 @@ from typing import Dict, Tuple, Optional, Union
 import sys
 import os
 
-# Add parent directory to path for V6 imports
+# Add parent directory to path for v6 imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from .pooler_v6 import LatentPooler
@@ -52,16 +52,16 @@ from .latent_discriminator_v6 import (
     MultiScaleLatentDiscriminator
 )
 from .utils_v6 import masked_mse_loss, compute_gradient_penalty_latent
-from .config_model_v6 import TimeGANV6Config
+from .config_model_v6 import TimeGANv6Config
 
-# Import V6 encoder/decoder
-from embedder_V6 import Embedder
-from recovery_V6 import Recovery
+# Import v6 encoder/decoder
+from embedder_v6 import Embedder
+from recovery_v6 import Recovery
 
 
-class TimeGANV6(nn.Module):
+class TimeGANv6(nn.Module):
     """
-    TimeGAN V6: RTSGAN-Style Two-Stage Training Model.
+    TimeGAN v6: RTSGAN-Style Two-Stage Training Model.
 
     Architecture:
         Stage 1 (Autoencoder):
@@ -77,17 +77,17 @@ class TimeGANV6(nn.Module):
             noise + condition → Generator → z_summary → Expander* → h_seq → Decoder* → x_fake
     """
 
-    def __init__(self, config: TimeGANV6Config = None):
+    def __init__(self, config: TimeGANv6Config = None):
         """
-        Initialize TimeGAN V6 model.
+        Initialize TimeGAN v6 model.
 
         Args:
-            config: TimeGANV6Config instance (uses defaults if None)
+            config: TimeGANv6Config instance (uses defaults if None)
         """
         super().__init__()
 
         if config is None:
-            config = TimeGANV6Config()
+            config = TimeGANv6Config()
 
         self.config = config
         self._build_model()
@@ -101,7 +101,7 @@ class TimeGANV6(nn.Module):
         cfg = self.config
 
         # =====================================================================
-        # Encoder (from V6)
+        # Encoder (from v6)
         # =====================================================================
         self.encoder = Embedder(
             feature_dim=cfg.feature_dim,
@@ -111,7 +111,7 @@ class TimeGANV6(nn.Module):
         )
 
         # =====================================================================
-        # Decoder (from V6)
+        # Decoder (from v6)
         # =====================================================================
         self.decoder = Recovery(
             latent_dim=cfg.latent_dim,
@@ -121,7 +121,7 @@ class TimeGANV6(nn.Module):
         )
 
         # =====================================================================
-        # Pooler (NEW in V6)
+        # Pooler (NEW in v6)
         # =====================================================================
         self.pooler = LatentPooler(
             latent_dim=cfg.latent_dim,
@@ -131,7 +131,7 @@ class TimeGANV6(nn.Module):
         )
 
         # =====================================================================
-        # Expander (NEW in V6)
+        # Expander (NEW in v6)
         # =====================================================================
         self.expander = LatentExpander(
             summary_dim=cfg.summary_dim,
@@ -143,7 +143,7 @@ class TimeGANV6(nn.Module):
         )
 
         # =====================================================================
-        # Generator (NEW in V6)
+        # Generator (NEW in v6)
         # =====================================================================
         if cfg.generator_type == 'film':
             self.generator = ConditionalLatentGenerator(
@@ -162,7 +162,7 @@ class TimeGANV6(nn.Module):
             )
 
         # =====================================================================
-        # Discriminator (NEW in V6)
+        # Discriminator (NEW in v6)
         # =====================================================================
         if cfg.discriminator_type == 'projection':
             self.discriminator = ConditionalLatentDiscriminator(
@@ -227,7 +227,7 @@ class TimeGANV6(nn.Module):
         x_recon = self.decoder(h_seq_recon, lengths)
 
         # Direct decode (bypass bottleneck): h_seq → x_direct
-        # This gives encoder direct gradients like V6, preventing vanishing gradients
+        # This gives encoder direct gradients like v6, preventing vanishing gradients
         x_direct = self.decoder(h_seq, lengths)
 
         # Compute losses
@@ -619,7 +619,7 @@ class TimeGANV6(nn.Module):
         """Get model summary string."""
         counts = self.count_parameters()
         lines = [
-            "TimeGAN V6 Model Summary",
+            "TimeGAN v6 Model Summary",
             "=" * 50,
             f"Stage: {self.current_stage}",
             f"Autoencoder frozen: {self.is_autoencoder_frozen}",
@@ -652,7 +652,7 @@ class TimeGANV6(nn.Module):
 # ============================================================================
 
 if __name__ == '__main__':
-    print("Testing TimeGAN V6 Model...")
+    print("Testing TimeGAN v6 Model...")
     print("=" * 60)
 
     device = torch.device('cpu')
@@ -665,8 +665,8 @@ if __name__ == '__main__':
 
     # Create model with default config
     print("\n=== Creating Model ===")
-    config = TimeGANV6Config(device='cpu')
-    model = TimeGANV6(config)
+    config = TimeGANv6Config(device='cpu')
+    model = TimeGANv6(config)
     model.to(device)
 
     print(model.summary())
@@ -773,6 +773,7 @@ if __name__ == '__main__':
     print("Parameter groups: PASS")
 
     print("\n" + "=" * 60)
-    print("ALL TIMEGAN V6 MODEL TESTS PASSED")
+    print("ALL TIMEGAN v6 MODEL TESTS PASSED")
     print("=" * 60)
+
 
