@@ -2,8 +2,8 @@
 TimeGAN V6 Model - RTSGAN-Style Two-Stage Training
 
 Main model wrapper that composes all components:
-- Encoder (from V4): Maps trajectories to latent sequences
-- Decoder (from V4): Maps latent sequences to trajectories
+- Encoder (from V6): Maps trajectories to latent sequences
+- Decoder (from V6): Maps latent sequences to trajectories
 - Pooler: Compresses latent sequences to summary vectors
 - Expander: Expands summary vectors to latent sequences
 - Generator: Produces latent summaries from noise + condition
@@ -40,7 +40,7 @@ from typing import Dict, Tuple, Optional, Union
 import sys
 import os
 
-# Add parent directory to path for V4 imports
+# Add parent directory to path for V6 imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from .pooler_v6 import LatentPooler
@@ -54,9 +54,9 @@ from .latent_discriminator_v6 import (
 from .utils_v6 import masked_mse_loss, compute_gradient_penalty_latent
 from .config_model_v6 import TimeGANV6Config
 
-# Import V4 encoder/decoder
-from embedder_v4 import Embedder
-from recovery_v4 import Recovery
+# Import V6 encoder/decoder
+from embedder_V6 import Embedder
+from recovery_V6 import Recovery
 
 
 class TimeGANV6(nn.Module):
@@ -101,7 +101,7 @@ class TimeGANV6(nn.Module):
         cfg = self.config
 
         # =====================================================================
-        # Encoder (from V4)
+        # Encoder (from V6)
         # =====================================================================
         self.encoder = Embedder(
             feature_dim=cfg.feature_dim,
@@ -111,7 +111,7 @@ class TimeGANV6(nn.Module):
         )
 
         # =====================================================================
-        # Decoder (from V4)
+        # Decoder (from V6)
         # =====================================================================
         self.decoder = Recovery(
             latent_dim=cfg.latent_dim,
@@ -227,7 +227,7 @@ class TimeGANV6(nn.Module):
         x_recon = self.decoder(h_seq_recon, lengths)
 
         # Direct decode (bypass bottleneck): h_seq → x_direct
-        # This gives encoder direct gradients like V4, preventing vanishing gradients
+        # This gives encoder direct gradients like V6, preventing vanishing gradients
         x_direct = self.decoder(h_seq, lengths)
 
         # Compute losses
@@ -775,3 +775,4 @@ if __name__ == '__main__':
     print("\n" + "=" * 60)
     print("ALL TIMEGAN V6 MODEL TESTS PASSED")
     print("=" * 60)
+
