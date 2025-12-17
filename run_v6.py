@@ -49,7 +49,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # RUN MODE - Change this to control what the script does
 # ==============================================================================
 
-RUN_MODE = "quick_test"  # <-- CHANGE THIS (see options above)
+RUN_MODE = "train"  # <-- CHANGE THIS (see options above)
 
 
 # ==============================================================================
@@ -69,7 +69,7 @@ CONFIG = {
     #   Bad:  "checkpoints/v6"
     "checkpoint_dir": "./checkpoints/v6",     # Where to save checkpoints
     "stage1_checkpoint": "checkpoints/v6/stage1_final.pt",                # .pt file for Stage 2 training (e.g., "checkpoints/v6/stage1_final.pt")
-    "resume_checkpoint": None,                # .pt file to resume from (e.g., "checkpoints/v6/stage2_iter5000.pt")
+    "resume_checkpoint": "checkpoints/v6/stage2_iter5000.pt",                # .pt file to resume from (e.g., "checkpoints/v6/stage2_iter5000.pt")
     "eval_checkpoint": "checkpoints/v6/final.pt",                  # .pt file for eval/generate (e.g., "checkpoints/v6/final.pt")
 
     # ─── Device ───────────────────────────────────────────────────────────────
@@ -123,7 +123,7 @@ CONFIG = {
     "summary_dim": 192,                       # Bottleneck size (default: 96, try 128-256 if loss plateaus)
     "pool_type": "hybrid",                    # "attention", "mean", "last", "hybrid"
     "latent_dim": 64,                         # Per-timestep latent (default: 48, increased for more encoder capacity)
-    "expand_type": None,                      # "lstm", "mlp", "repeat"
+    "expand_type":"lstm",                      # "lstm", "mlp", "repeat", None
 }
 
 
@@ -998,5 +998,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
