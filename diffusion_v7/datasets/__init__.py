@@ -10,17 +10,15 @@ from .trajectory_dataset import (
     create_dataloaders,
     create_single_batch_dataset
 )
-from .dataset import Text2MotionDataset
-from .evaluator import (
-    EvaluationDataset,
-    get_dataset_motion_loader,
-    get_motion_loader,
-    EvaluatorModelWrapper)
-from .dataloader import build_dataloader
+
+# Note: Original MotionDiffuse dataset classes are available but not imported
+# by default to avoid dependency issues. Import directly if needed:
+# from .dataset import Text2MotionDataset
+# from .evaluator import EvaluationDataset, etc.
 
 __all__ = [
     'TrajectoryDataset',
     'create_dataloader',
     'create_dataloaders',
-    'create_single_batch_dataset','Text2MotionDataset', 'EvaluationDataset', 'build_dataloader',
-    'get_dataset_motion_loader', 'get_motion_loader']
+    'create_single_batch_dataset',
+]
