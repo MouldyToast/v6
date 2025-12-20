@@ -379,10 +379,20 @@ def main():
         # Print report
         print_metrics_report(metrics)
 
+        # Convert numpy types to native Python types for JSON serialization
+        metrics_json = {}
+        for key, value in metrics.items():
+            if hasattr(value, 'item'):  # numpy scalar
+                metrics_json[key] = value.item()
+            elif isinstance(value, np.ndarray):
+                metrics_json[key] = value.tolist()
+            else:
+                metrics_json[key] = value
+
         # Save metrics
         metrics_path = output_dir / 'evaluation_metrics.json'
         with open(metrics_path, 'w') as f:
-            json.dump(metrics, f, indent=2)
+            json.dump(metrics_json, f, indent=2)
         print(f"✓ Saved metrics to {metrics_path}")
 
     # Save generation info
