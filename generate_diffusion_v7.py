@@ -95,7 +95,7 @@ def load_checkpoint(checkpoint_path: str, device: torch.device):
         model, goal_conditioner, diffusion, config, checkpoint
     """
     print(f"Loading checkpoint from {checkpoint_path}...")
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     # Load config
     if 'config' in checkpoint:
