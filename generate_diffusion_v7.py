@@ -2,10 +2,19 @@
 Generate Trajectories using Trained Diffusion Model
 
 Usage:
-    python generate_diffusion_v7.py --checkpoint checkpoints/diffusion_v7_best.pt \
+    # Use best checkpoint (lowest validation loss):
+    python generate_diffusion_v7.py --checkpoint checkpoints/best.pth \
                                      --num_samples 100 \
                                      --cfg_scale 2.0 \
                                      --output_dir results/
+
+    # Or use final checkpoint:
+    python generate_diffusion_v7.py --checkpoint checkpoints/final.pth \
+                                     --num_samples 100
+
+    # Or use a specific epoch checkpoint:
+    python generate_diffusion_v7.py --checkpoint checkpoints/checkpoint_epoch_50.pth \
+                                     --num_samples 100
 
 This script:
 1. Loads a trained diffusion model

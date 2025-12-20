@@ -124,6 +124,7 @@ class TrajectoryDiffusionTrainer:
         # Training state
         self.global_step = 0
         self.epoch = 0
+        self.best_val_loss = float('inf')  # Track best validation loss
 
         # Model info
         self._print_model_info()
@@ -384,7 +385,15 @@ class TrajectoryDiffusionTrainer:
             epoch_time = time.time() - epoch_start
             self._log_epoch(epoch, train_metrics, val_metrics, epoch_time)
 
-            # Checkpointing
+            # Save best checkpoint based on validation loss
+            if val_metrics is not None:
+                val_loss = val_metrics['loss']
+                if val_loss < self.best_val_loss:
+                    self.best_val_loss = val_loss
+                    self.save_checkpoint('best.pth')
+                    print(f"✓ New best validation loss: {val_loss:.6f}")
+
+            # Periodic checkpointing
             if (epoch + 1) % (self.config.checkpoint_interval // len(train_loader)) == 0:
                 self.save_checkpoint(f'checkpoint_epoch_{epoch+1}.pth')
 
@@ -507,6 +516,7 @@ class TrajectoryDiffusionTrainer:
         checkpoint = {
             'epoch': self.epoch,
             'global_step': self.global_step,
+            'best_val_loss': self.best_val_loss,
             'model_state_dict': self.model.state_dict(),
             'goal_conditioner_state_dict': self.goal_conditioner.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
@@ -531,6 +541,7 @@ class TrajectoryDiffusionTrainer:
 
         self.epoch = checkpoint['epoch']
         self.global_step = checkpoint['global_step']
+        self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.goal_conditioner.load_state_dict(checkpoint['goal_conditioner_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -541,6 +552,8 @@ class TrajectoryDiffusionTrainer:
         print(f"Loaded checkpoint: {load_path}")
         print(f"  Epoch: {self.epoch}")
         print(f"  Global step: {self.global_step}")
+        if self.best_val_loss != float('inf'):
+            print(f"  Best val loss: {self.best_val_loss:.6f}")
 
 
 # =============================================================================
