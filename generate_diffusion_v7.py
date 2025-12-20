@@ -360,11 +360,21 @@ def main():
 
         # Load normalization params if available
         norm_params = None
-        norm_path = Path(args.data_dir) / 'normalization_params.json'
-        if norm_path.exists():
-            with open(norm_path, 'r') as f:
+        norm_path_json = Path(args.data_dir) / 'normalization_params.json'
+        norm_path_npy = Path(args.data_dir) / 'normalization_params.npy'
+
+        if norm_path_json.exists():
+            with open(norm_path_json, 'r') as f:
                 norm_params = json.load(f)
-            print(f"Loaded normalization params from {norm_path}")
+            print(f"Loaded normalization params from {norm_path_json}")
+        elif norm_path_npy.exists():
+            norm_params = np.load(norm_path_npy, allow_pickle=True).item()
+            print(f"Loaded normalization params from {norm_path_npy}")
+            # Show key parameters
+            if 'goal_dist_min' in norm_params and 'goal_dist_max' in norm_params:
+                print(f"  Distance range: {norm_params['goal_dist_min']:.2f} to {norm_params['goal_dist_max']:.2f} pixels")
+        else:
+            print(f"⚠️  Warning: No normalization params found at {norm_path_npy}")
 
         # Run evaluation
         metrics = evaluate_trajectories(
