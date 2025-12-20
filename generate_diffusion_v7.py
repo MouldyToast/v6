@@ -128,7 +128,7 @@ def load_checkpoint(checkpoint_path: str, device: torch.device):
         betas=np.linspace(
             config.beta_start,
             config.beta_end,
-            config.num_diffusion_steps
+            config.diffusion_steps
         )
     )
 
@@ -387,3 +387,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
