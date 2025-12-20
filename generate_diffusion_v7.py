@@ -30,6 +30,12 @@ from tqdm import tqdm
 
 from diffusion_v7.config_trajectory import TrajectoryDiffusionConfig
 from diffusion_v7.models import GoalConditioner, TrajectoryTransformer, GaussianDiffusion
+from diffusion_v7.models.gaussian_diffusion import (
+    get_named_beta_schedule,
+    ModelMeanType,
+    ModelVarType,
+    LossType
+)
 from diffusion_v7.sampling import TrajectoryGenerator
 from diffusion_v7.evaluation import evaluate_trajectories, print_metrics_report
 from diffusion_v7.datasets import TrajectoryDataset
@@ -122,12 +128,37 @@ def load_checkpoint(checkpoint_path: str, device: torch.device):
         max_seq_len=200
     ).to(device)
 
+    # Create diffusion process (match trainer initialization)
+    betas = get_named_beta_schedule(
+        config.noise_schedule,
+        config.diffusion_steps
+    )
+
+    # Convert config strings to enums
+    model_mean_type = {
+        'epsilon': ModelMeanType.EPSILON,
+        'x0': ModelMeanType.START_X,
+        'previous_x': ModelMeanType.PREVIOUS_X
+    }.get(config.model_mean_type, ModelMeanType.EPSILON)
+
+    model_var_type = {
+        'fixed_small': ModelVarType.FIXED_SMALL,
+        'fixed_large': ModelVarType.FIXED_LARGE,
+        'learned': ModelVarType.LEARNED,
+        'learned_range': ModelVarType.LEARNED_RANGE
+    }.get(config.model_var_type, ModelVarType.FIXED_SMALL)
+
+    loss_type = {
+        'mse': LossType.MSE,
+        'l1': LossType.RESCALED_MSE,
+        'kl': LossType.KL
+    }.get(config.loss_type, LossType.MSE)
+
     diffusion = GaussianDiffusion(
-        betas=np.linspace(
-            config.beta_start,
-            config.beta_end,
-            config.num_diffusion_steps
-        )
+        betas=betas,
+        model_mean_type=model_mean_type,
+        model_var_type=model_var_type,
+        loss_type=loss_type
     )
 
     # Load weights
