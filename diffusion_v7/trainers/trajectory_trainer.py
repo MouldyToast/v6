@@ -537,7 +537,7 @@ class TrajectoryDiffusionTrainer:
         if not load_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {load_path}")
 
-        checkpoint = torch.load(load_path, map_location=self.device)
+        checkpoint = torch.load(load_path, map_location=self.device, weights_only=False)
 
         self.epoch = checkpoint['epoch']
         self.global_step = checkpoint['global_step']
