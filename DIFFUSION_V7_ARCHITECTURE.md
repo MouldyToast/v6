@@ -49,12 +49,127 @@ Diffusion V7 is a **pure diffusion model** (DDPM) that generates realistic mouse
 
 ## Complete Pipeline
 
+### Phase 0: Data Collection & Preparation
+
+This phase captures raw mouse movement data and prepares it for preprocessing.
+
+```
+Step 0.1: Record Mouse Movements
+─────────────────────────────────
+SapiRecorder.py (GUI Application)
+    │
+    │  User performs point-to-point movements:
+    │  - Click dot A (start) → Move → Click dot B (target)
+    │  - 125Hz sampling (8ms intervals)
+    │  - 192 combinations (24 distances × 8 orientations)
+    │  - Real-time validation (start/end velocity checks)
+    │
+    ↓
+D:\V6\user0001\
+    ├── session_2024_01_15_1_3min.csv
+    ├── session_2024_01_15_2_3min.csv
+    └── ... (multiple session files)
+
+Step 0.2: Combine Recording Sessions
+────────────────────────────────────
+python combine_cvss.py
+    │
+    │  Simply concatenates all session CSVs
+    │  Preserves all original data unchanged
+    │
+    ↓
+D:\V6\combined_all_sessions.csv
+    (Columns: client timestamp, button, state, x, y)
+
+Step 0.3: Split into Individual Trajectories
+────────────────────────────────────────────
+python trajectory_splitter_adaptive.py combined_all_sessions.csv trajectories/
+    │
+    │  - Splits on click events (Released state)
+    │  - Removes leading/trailing stationary periods
+    │  - Preserves true timing (~2ms intervals)
+    │  - Computes ideal_distance and actual_distance
+    │
+    ↓
+trajectories/
+    ├── trajectory_0001.json
+    ├── trajectory_0002.json
+    └── ... (one JSON per recorded movement)
+```
+
+**CSV Format (from SapiRecorder.py):**
+```csv
+client timestamp,button,state,x,y
+0,NoButton,Move,1250,710
+8,NoButton,Move,1250,710
+16,NoButton,Move,1251,709
+...
+1234,Left,Pressed,1450,520
+1234,Left,Released,1450,520
+```
+
+**JSON Format (from trajectory_splitter_adaptive.py):**
+```json
+{
+  "x": [1250, 1251, 1253, ...],
+  "y": [710, 709, 707, ...],
+  "t": [0, 8, 16, ...],
+  "ideal_distance": 347.5,
+  "actual_distance": 362.1,
+  "original_length": 156,
+  "extracted_length": 142
+}
+```
+
+**Data Collection Configuration (SapiRecorder.py):**
+```python
+# 24 distance thresholds (pixels) - logarithmically spaced
+DISTANCE_THRESHOLDS = [27, 31, 36, 41, 47, 54, 62, 71, 82, 94, 108, 124,
+                       143, 164, 189, 217, 250, 288, 331, 381, 438, 504, 580, 667]
+
+# 8 cardinal directions
+ORIENTATIONS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+
+# Angle ranges for each direction (screen coordinates: Y increases downward)
+SCREEN_ANGLE_RANGES = {
+    "E":  (-22.5, 22.5),   "SE": (22.5, 67.5),   "S":  (67.5, 112.5),
+    "SW": (112.5, 157.5),  "W":  (157.5, 202.5), "NW": (-157.5, -112.5),
+    "N":  (-112.5, -67.5), "NE": (-67.5, -22.5),
+}
+
+# Total combinations: 24 distances × 8 directions = 192 trajectories per session
+```
+
 ### Phase 1: Data Preprocessing
 
 ```
 Raw Data (trajectories/*.json)
     ↓
 preprocess_V6.py
+    │
+    ├── Step 1: Load raw trajectories (x, y, t arrays)
+    │
+    ├── Step 1.5: Filter bad recordings
+    │   ├── Length > 195 points (would be truncated)
+    │   ├── Distance ratio > 3.0x (erratic/distracted path)
+    │   └── Ideal distance < 20px (too short)
+    │
+    ├── Step 2: Compute 8D style features
+    │   └── [dx, dy, speed, accel, sin_h, cos_h, ang_vel, dt]
+    │
+    ├── Step 3.0: Clip outliers (1st-99th percentile)
+    │   └── Prevents extreme values from dominating normalization
+    │
+    ├── Step 3: Normalize features to [-1, 1]
+    │   └── Min-max normalization per feature
+    │
+    ├── Step 4: Compute 3D goal conditioning
+    │   └── [distance_norm, cos(angle), sin(angle)]
+    │
+    ├── Step 5: Pad sequences to fixed length (200)
+    │   └── Post-padding: [real, real, ..., 0, 0, 0]
+    │
+    └── Step 6: Create train/val/test splits (60/20/20)
     ↓
 processed_data_v6/
     ├── X_train.npy           (trajectories: batch × 200 × 8)
@@ -141,6 +256,20 @@ Diagnostic plots for analysis
 
 ```
 v6/
+├── # ─────────────────────────────────────────────────────────────────
+├── # DATA COLLECTION & PREPARATION (Phase 0)
+├── # ─────────────────────────────────────────────────────────────────
+├── SapiRecorder.py                  # GUI for recording mouse movements
+├── combine_cvss.py                  # Combine multiple session CSVs
+├── trajectory_splitter_adaptive.py  # Split CSV → individual JSON trajectories
+├── trajectories/                    # Output: individual trajectory JSONs
+│   ├── trajectory_0001.json
+│   ├── trajectory_0002.json
+│   └── ...
+│
+├── # ─────────────────────────────────────────────────────────────────
+├── # DIFFUSION MODEL (Phase 1-4)
+├── # ─────────────────────────────────────────────────────────────────
 ├── diffusion_v7/                    # Main package
 │   ├── __init__.py
 │   ├── config_trajectory.py         # Configuration system
@@ -342,7 +471,12 @@ Evaluate metrics (with denormalization)
 
 ### ✅ ESSENTIAL - DO NOT DELETE
 
-**Core Package:**
+**Data Collection & Preparation (Phase 0):**
+- `SapiRecorder.py` - GUI for recording mouse movements (125Hz sampling)
+- `combine_cvss.py` - Combine multiple recording session CSVs
+- `trajectory_splitter_adaptive.py` - Split combined CSV into individual trajectory JSONs
+
+**Core Package (Phase 1-4):**
 - `diffusion_v7/` (entire directory)
   - `config_trajectory.py`
   - `models/goal_conditioner.py`
@@ -356,9 +490,9 @@ Evaluate metrics (with denormalization)
   - All `__init__.py` files
 
 **Scripts:**
-- `preprocess_V6.py` - Data preprocessing
-- `train_diffusion_v7.py` - Training CLI
-- `generate_diffusion_v7.py` - Generation CLI
+- `preprocess_V6.py` - Data preprocessing (Phase 1)
+- `train_diffusion_v7.py` - Training CLI (Phase 2)
+- `generate_diffusion_v7.py` - Generation CLI (Phase 3)
 
 **Data:**
 - `processed_data_v6/` (all .npy files)
@@ -406,7 +540,45 @@ Evaluate metrics (with denormalization)
 
 ## Usage Guide
 
-### 1. Preprocessing (One-Time)
+### 0. Data Collection & Preparation (Phase 0)
+
+**Step 0.1: Record Mouse Movements**
+```bash
+python SapiRecorder.py
+```
+- A GUI window opens with two dots (A=start, B=target)
+- Click on dot A to start recording → Move mouse → Click on dot B to stop
+- Each session records 192 trajectories (24 distances × 8 directions)
+- Output: `D:\V6\user0001\session_*.csv` files
+
+**Recording Settings (in SapiRecorder.py):**
+```python
+DOT_RADIUS = 10
+SESSION_DURATION_MS = 400000        # ~6.6 minutes per session
+TARGET_TRAJECTORIES = 192           # One complete cycle
+VALIDATION_ENABLED = True           # Reject bad starts/ends
+START_VELOCITY_THRESHOLD = 10       # px/s max for valid start
+END_VELOCITY_THRESHOLD = 10         # px/s max for valid end
+```
+
+**Step 0.2: Combine Recording Sessions**
+```bash
+# Edit combine_cvss.py to set INPUT_DIR and OUTPUT_CSV paths
+python combine_cvss.py
+```
+- Combines all session CSVs into one file
+- Output: `combined_all_sessions.csv`
+
+**Step 0.3: Split into Individual Trajectories**
+```bash
+python trajectory_splitter_adaptive.py combined_all_sessions.csv trajectories/
+```
+- Splits on click events (Left button Released)
+- Removes leading/trailing stationary periods
+- Validates timing consistency (~2ms intervals)
+- Output: `trajectories/trajectory_NNNN.json` files
+
+### 1. Preprocessing (Phase 1)
 
 ```bash
 python preprocess_V6.py --input trajectories/ --output processed_data_v6/
@@ -718,8 +890,28 @@ goal_conditioner.load_state_dict(checkpoint['goal_conditioner_state_dict'])
 ### Common Commands
 
 ```bash
-# Preprocessing
+# ═══════════════════════════════════════════════════════════════════════
+# PHASE 0: DATA COLLECTION & PREPARATION
+# ═══════════════════════════════════════════════════════════════════════
+
+# Step 0.1: Record mouse movements (GUI application)
+python SapiRecorder.py
+
+# Step 0.2: Combine all session CSVs
+python combine_cvss.py
+
+# Step 0.3: Split into individual trajectory JSONs
+python trajectory_splitter_adaptive.py combined_all_sessions.csv trajectories/
+
+# ═══════════════════════════════════════════════════════════════════════
+# PHASE 1: PREPROCESSING
+# ═══════════════════════════════════════════════════════════════════════
+
 python preprocess_V6.py --input trajectories/ --output processed_data_v6/
+
+# ═══════════════════════════════════════════════════════════════════════
+# PHASE 2: TRAINING
+# ═══════════════════════════════════════════════════════════════════════
 
 # Smoke test
 python train_diffusion_v7.py --mode smoke_test
@@ -727,10 +919,16 @@ python train_diffusion_v7.py --mode smoke_test
 # Full training
 python train_diffusion_v7.py --mode medium --epochs 500
 
-# Generation
+# ═══════════════════════════════════════════════════════════════════════
+# PHASE 3: GENERATION
+# ═══════════════════════════════════════════════════════════════════════
+
 python generate_diffusion_v7.py --checkpoint checkpoints_diffusion_v7/best.pth --num_samples 100
 
-# Diagnostics
+# ═══════════════════════════════════════════════════════════════════════
+# DIAGNOSTICS
+# ═══════════════════════════════════════════════════════════════════════
+
 python visualize_generated.py
 python compare_real_vs_generated.py
 python diagnose_distance_error.py
@@ -762,4 +960,4 @@ For issues, see:
 - GitHub Issues: https://github.com/anthropics/claude-code/issues
 - This document: `DIFFUSION_V7_ARCHITECTURE.md`
 
-Last updated: 2025-12-21
+Last updated: 2025-12-25
