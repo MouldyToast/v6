@@ -332,72 +332,207 @@ v6/
 
 ### 1. Configuration (`config_trajectory.py`)
 
+The complete configuration with all parameters:
+
 ```python
 @dataclass
 class TrajectoryDiffusionConfig:
-    # Model architecture
-    latent_dim: int = 512
-    num_layers: int = 9
-    num_heads: int = 8
-    ff_size: int = 1024
+    # ═══════════════════════════════════════════════════════════════════
+    # DATA CONFIGURATION
+    # ═══════════════════════════════════════════════════════════════════
+    input_dim: int = 8              # Trajectory features (dx, dy, speed, accel, sin_h, cos_h, ang_vel, dt)
+    condition_dim: int = 3          # Goal conditioning (distance_norm, cos(angle), sin(angle))
+    max_seq_len: int = 200          # Maximum trajectory length
 
-    # Diffusion
-    diffusion_steps: int = 1000
-    noise_schedule: str = 'linear'
+    # ═══════════════════════════════════════════════════════════════════
+    # MODEL ARCHITECTURE
+    # ═══════════════════════════════════════════════════════════════════
+    latent_dim: int = 512           # Transformer hidden dimension
+    num_layers: int = 9             # Number of transformer blocks
+    num_heads: int = 8              # Attention heads (latent_dim must be divisible by num_heads)
+    ff_size: int = 1024             # Feedforward expansion size
+    dropout: float = 0.1            # Dropout rate
+    activation: str = 'gelu'        # Activation: 'gelu', 'relu', 'silu'
 
-    # CFG
-    use_cfg: bool = True
-    cfg_dropout: float = 0.1
-    cfg_guidance_scale: float = 2.0
+    # ═══════════════════════════════════════════════════════════════════
+    # CLASSIFIER-FREE GUIDANCE (CFG)
+    # ═══════════════════════════════════════════════════════════════════
+    use_cfg: bool = True            # Enable classifier-free guidance
+    cfg_dropout: float = 0.1        # Probability of dropping condition during training
+    cfg_guidance_scale: float = 2.0 # Guidance scale during sampling (>1 = stronger conditioning)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # DIFFUSION PROCESS
+    # ═══════════════════════════════════════════════════════════════════
+    diffusion_steps: int = 1000     # Number of diffusion timesteps (T)
+    noise_schedule: str = 'linear'  # Beta schedule: 'linear', 'cosine', 'sqrt'
+    beta_start: float = 1e-4        # Starting beta value
+    beta_end: float = 0.02          # Ending beta value
+    model_mean_type: str = 'epsilon'    # 'epsilon' (predict noise), 'x0', 'previous_x'
+    model_var_type: str = 'fixed_small' # 'fixed_small', 'fixed_large', 'learned'
+    loss_type: str = 'mse'              # 'mse', 'l1'
+
+    # ═══════════════════════════════════════════════════════════════════
+    # TRAINING
+    # ═══════════════════════════════════════════════════════════════════
+    batch_size: int = 64            # Training batch size
+    learning_rate: float = 1e-4     # Adam learning rate
+    weight_decay: float = 0.0       # L2 regularization
+    grad_clip: float = 0.5          # Gradient clipping threshold
+    num_epochs: int = 1000          # Total training epochs
+    optimizer: str = 'adam'         # 'adam' or 'adamw'
+    betas: tuple = (0.9, 0.999)     # Adam betas
+
+    # Learning rate schedule
+    use_lr_scheduler: bool = False  # Enable cosine LR decay
+    lr_warmup_steps: int = 500      # Warmup steps
+    lr_decay_steps: int = 10000     # Steps for cosine decay
+
+    # ═══════════════════════════════════════════════════════════════════
+    # SAMPLING (GENERATION)
+    # ═══════════════════════════════════════════════════════════════════
+    sampling_method: str = 'ddim'   # 'ddpm' or 'ddim'
+    ddim_steps: int = 50            # DDIM sampling steps (faster than 1000 DDPM)
+    ddim_eta: float = 0.0           # DDIM eta (0=deterministic, 1=stochastic like DDPM)
+    clip_denoised: bool = False     # Clip samples to [-1, 1] during denoising
+
+    # ═══════════════════════════════════════════════════════════════════
+    # DATA LOADING
+    # ═══════════════════════════════════════════════════════════════════
+    data_dir: str = 'processed_data_v6'
+    num_workers: int = 4            # DataLoader workers
+    pin_memory: bool = True         # Pin memory for GPU transfer
+
+    # ═══════════════════════════════════════════════════════════════════
+    # LOGGING & CHECKPOINTING
+    # ═══════════════════════════════════════════════════════════════════
+    log_interval: int = 10          # Log every N steps
+    sample_interval: int = 100      # Generate samples every N steps (smoke test)
+    checkpoint_interval: int = 500  # Save checkpoint every N steps
+    save_dir: str = 'checkpoints_diffusion_v7'
+    log_dir: str = 'logs_diffusion_v7'  # TensorBoard logs
+
+    # ═══════════════════════════════════════════════════════════════════
+    # SMOKE TEST MODE
+    # ═══════════════════════════════════════════════════════════════════
+    smoke_test: bool = False        # Enable single-batch overfitting mode
+    smoke_test_steps: int = 1000    # Steps for smoke test
+    smoke_test_batch_size: int = 64 # Batch size for smoke test
 ```
 
-**Presets:**
-- `smoke_test()`: 128D, 4 layers, 858K params
-- `medium()`: 256D, 6 layers, 4.8M params
-- `full()`: 512D, 9 layers, 28.5M params
+**Presets (from `config_trajectory.py`):**
+
+| Preset | latent_dim | num_layers | num_heads | ff_size | ~Parameters |
+|--------|------------|------------|-----------|---------|-------------|
+| `smoke_test()` | 128 | 4 | 4 | 256 | ~858K |
+| `medium()` | 256 | 6 | 8 | 512 | ~4.8M |
+| `full()` | 512 | 9 | 8 | 1024 | ~28.5M |
 
 ### 2. Goal Conditioner (`goal_conditioner.py`)
 
 Embeds 3D goal condition → latent space for transformer.
 
-```python
-class GoalConditioner(nn.Module):
-    def __init__(self, condition_dim=3, latent_dim=512, use_cfg=True):
-        # MLP: 3 → 128 → 256 → latent_dim
-        # Learnable null embedding for CFG
-        self.null_embedding = nn.Parameter(torch.zeros(latent_dim))
-
-    def forward(self, condition, mask=None):
-        # mask=True: use condition, mask=False: use null
-        # During training: 10% dropout (null embedding)
-        # During generation: run both for CFG
 ```
+[distance_norm, cos(angle), sin(angle)]  ← Input: (batch, 3)
+    ↓
+Linear(3 → 128) + SiLU + Dropout(0.1)
+    ↓
+Linear(128 → 256) + SiLU + Dropout(0.1)
+    ↓
+Linear(256 → latent_dim)
+    ↓
+goal_embedding (batch, latent_dim)       ← Output
+```
+
+**Classifier-Free Guidance (CFG) Implementation:**
+```python
+# Training: Randomly drop conditions (replace with learned null embedding)
+cfg_mask = torch.rand(batch_size) > cfg_dropout  # True = keep condition
+embedded = mask * condition_embed + (1 - mask) * null_embed
+
+# Sampling: Combine conditional + unconditional predictions
+pred = pred_uncond + cfg_scale * (pred_cond - pred_uncond)
+# cfg_scale = 1.0 → pure conditional
+# cfg_scale > 1.0 → extrapolate beyond conditional (stronger guidance)
+```
+
+**Key Methods:**
+- `forward(condition, mask)` - Embed conditions with optional CFG masking
+- `get_null_embedding(batch_size, device)` - Get null embeddings for unconditional
+- `sample_with_cfg(condition, model_fn, guidance_scale)` - CFG sampling helper
 
 ### 3. Trajectory Transformer (`trajectory_transformer.py`)
 
-Denoising model adapted from MotionDiffuse.
+Denoising model adapted from MotionDiffuse. Predicts noise given noisy trajectory, timestep, and goal embedding.
 
-```python
-class TrajectoryTransformer(nn.Module):
-    def __init__(self, input_dim=8, latent_dim=512, num_layers=9):
-        # Input projection: 8D → latent_dim
-        # Positional encoding (learnable)
-        # Time embedding (sinusoidal)
-        # Transformer blocks with FiLM conditioning
-        # Output projection: latent_dim → 8D
+**Full Architecture:**
+```
+Input: x_noisy (batch, seq_len, 8), t (batch,), goal_embed (batch, latent_dim), lengths (batch,)
 
-    def forward(self, x, t, goal_embed, lengths):
-        # x: (batch, seq_len, 8) - noisy trajectory
-        # t: (batch,) - timesteps
-        # goal_embed: (batch, latent_dim) - from GoalConditioner
-        # Returns: (batch, seq_len, 8) - predicted noise
+┌────────────────────────────────────────────────────────────────────┐
+│  INPUT EMBEDDING                                                    │
+│  ─────────────────                                                  │
+│  x_noisy (batch, seq_len, 8)                                       │
+│      ↓ Linear(8 → latent_dim)                                      │
+│  h (batch, seq_len, latent_dim)                                    │
+│      + pos_encoding (learnable: max_seq_len × latent_dim)          │
+└────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌────────────────────────────────────────────────────────────────────┐
+│  CONDITIONING EMBEDDING                                             │
+│  ──────────────────────                                             │
+│  t (batch,)                                                         │
+│      ↓ timestep_embedding() [sinusoidal, like NeRF]                │
+│      ↓ Linear(latent_dim → latent_dim) + SiLU + Linear             │
+│  t_emb (batch, latent_dim)                                         │
+│                                                                     │
+│  cond_emb = concat([t_emb, goal_embed])  → (batch, 2*latent_dim)   │
+└────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌────────────────────────────────────────────────────────────────────┐
+│  TRANSFORMER BLOCKS (×num_layers)                                   │
+│  ────────────────────────────────                                   │
+│  Each block:                                                        │
+│      TemporalSelfAttention(h, cond_emb, mask)                      │
+│          └→ Multi-head attention with length masking               │
+│          └→ StylizationBlock for FiLM conditioning                 │
+│      FeedForward(h, cond_emb)                                      │
+│          └→ Linear(latent_dim → ff_size) + GELU + Linear           │
+│          └→ StylizationBlock for FiLM conditioning                 │
+└────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌────────────────────────────────────────────────────────────────────┐
+│  OUTPUT PROJECTION                                                  │
+│  ────────────────                                                   │
+│  h (batch, seq_len, latent_dim)                                    │
+│      ↓ zero_module(Linear(latent_dim → 8))  [initialized to zero]  │
+│  noise_pred (batch, seq_len, 8)                                    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-**Key Adaptations from MotionDiffuse:**
-- 263D motion → 8D trajectories
-- Removed CLIP/text cross-attention
-- Direct goal conditioning via FiLM (scale & shift)
-- Variable-length masking (11-200 timesteps)
+**StylizationBlock (FiLM Conditioning):**
+```python
+# Modulates hidden states using scale and shift from conditioning
+emb_out = Linear(cond_emb) → SiLU → Linear → (scale, shift)
+h = LayerNorm(h) * (1 + scale) + shift  # FiLM modulation
+h = SiLU → Dropout → zero_module(Linear)
+```
+
+**Key Implementation Details:**
+- `zero_module()`: Initializes output layers to zero for stable training
+- Positional encoding: **Learnable** (not sinusoidal like original Transformer)
+- Attention mask: Generated from `lengths` tensor (1=valid, 0=padding)
+- `cond_embed_dim = time_embed_dim + goal_latent_dim` (double latent_dim)
+
+**Forward Signature:**
+```python
+def forward(self, x, t, goal_embed, lengths) -> noise_pred:
+    # x: (batch, seq_len, 8) - noisy trajectory features
+    # t: (batch,) - diffusion timesteps [0, T-1]
+    # goal_embed: (batch, latent_dim) - from GoalConditioner
+    # lengths: (batch,) - actual sequence lengths (for masking)
+    # Returns: (batch, seq_len, 8) - predicted noise ε
+```
 
 ### 4. Gaussian Diffusion (`gaussian_diffusion.py`)
 
@@ -411,17 +546,58 @@ Copied from MotionDiffuse (OpenAI's DDPM implementation).
 
 ### 5. Trajectory Sampler (`trajectory_sampler.py`)
 
-Fast generation with CFG.
+Fast generation with DDIM and Classifier-Free Guidance.
 
 ```python
 class TrajectoryGenerator:
     def generate(self, conditions, lengths,
-                 method='ddim', ddim_steps=50, cfg_scale=2.0):
-        # CFG: Run model twice (conditional + unconditional)
-        pred = pred_uncond + cfg_scale * (pred_cond - pred_uncond)
+                 method='ddim',        # 'ddim' or 'ddpm'
+                 ddim_steps=50,        # Fast: 50 steps vs 1000 DDPM
+                 ddim_eta=0.0,         # 0=deterministic, 1=stochastic
+                 cfg_scale=2.0,        # >1 = stronger conditioning
+                 use_cfg=True,
+                 num_samples=1,        # Samples per condition (for diversity)
+                 show_progress=True)
+```
 
-        # DDIM: 50 steps (~5 seconds)
-        # DDPM: 1000 steps (~100 seconds)
+**DDIM Sampling Algorithm:**
+```python
+# Create timestep schedule (50 evenly spaced steps from 1000)
+timesteps = [980, 960, 940, ..., 20, 0]  # Reversed for denoising
+
+# Start from pure noise
+x = torch.randn(batch, seq_len, 8)
+
+for t in timesteps:
+    # 1. Predict noise (with CFG if enabled)
+    if use_cfg:
+        pred_cond = model(x, t, goal_embed)
+        pred_uncond = model(x, t, null_embed)
+        pred = pred_uncond + cfg_scale * (pred_cond - pred_uncond)
+    else:
+        pred = model(x, t, goal_embed)
+
+    # 2. DDIM update step
+    x_0_pred = (x - sqrt(1-α_t) * pred) / sqrt(α_t)  # Predict clean sample
+    x = sqrt(α_next) * x_0_pred + sqrt(1-α_next) * pred  # Step toward clean
+
+# 3. Mask padding positions based on lengths
+x = x * length_mask
+```
+
+**Performance:**
+- DDIM (50 steps): ~0.5 seconds per batch of 64
+- DDPM (1000 steps): ~10 seconds per batch of 64
+
+**Convenience Method:**
+```python
+# Generate single trajectory
+trajectory = generator.generate_single(
+    distance=0.5,    # Normalized distance
+    angle=np.pi/4,   # Target angle in radians
+    length=100,      # Desired length
+    cfg_scale=2.0
+)  # Returns: (length, 8)
 ```
 
 ---
@@ -535,6 +711,53 @@ Evaluate metrics (with denormalization)
 **If fully migrating to diffusion:**
 - Can archive: All V6 GAN files
 - Keep preprocessing: `preprocess_V6.py` (still needed for diffusion)
+
+### 🔒 LEGACY MOTIONDIFFUSE FILES (in diffusion_v7/)
+
+The `diffusion_v7/` package contains legacy MotionDiffuse code that is **NOT actively used** but kept for reference. These files have unmet dependencies (CLIP, HumanML3D, etc.) and are excluded from `__init__.py` exports:
+
+```
+diffusion_v7/
+├── models/
+│   └── transformer.py          # Original MotionTransformer (requires CLIP)
+│                                # → Replaced by trajectory_transformer.py
+│
+├── trainers/
+│   └── ddpm_trainer.py         # Original DDPMTrainer (requires full MotionDiffuse stack)
+│                                # → Replaced by trajectory_trainer.py
+│
+├── datasets/
+│   └── dataset.py              # Text2MotionDataset (requires HumanML3D)
+│   └── evaluator.py            # EvaluationDataset (requires sentence-transformers)
+│                                # → Replaced by trajectory_dataset.py
+│
+├── options/                    # Argparse option files (not used)
+│   ├── base_options.py
+│   ├── train_options.py
+│   └── evaluate_options.py
+│
+├── tools/                      # Original training scripts (not used)
+│   ├── train.py
+│   ├── evaluation.py
+│   └── visualization.py
+│
+└── utils/                      # Utility modules (partially used)
+    ├── skeleton.py             # For human skeleton (not used)
+    ├── quaternion.py           # For motion (not used)
+    └── paramUtil.py            # Parameters (not used)
+```
+
+**Why kept?** The `gaussian_diffusion.py` is adapted from these and may need reference during debugging. Do not delete until diffusion training is fully validated.
+
+**Active code (what you should edit):**
+- `config_trajectory.py`
+- `models/goal_conditioner.py`
+- `models/trajectory_transformer.py`
+- `models/gaussian_diffusion.py`
+- `datasets/trajectory_dataset.py`
+- `trainers/trajectory_trainer.py`
+- `sampling/trajectory_sampler.py`
+- `evaluation/metrics.py`, `evaluation/visualize.py`
 
 ---
 
@@ -651,6 +874,86 @@ python visualize_generated.py
 python compare_real_vs_generated.py
 python diagnose_distance_error.py
 ```
+
+---
+
+## Evaluation Metrics (`evaluation/metrics.py`)
+
+The `evaluate_trajectories()` function computes comprehensive metrics:
+
+### Goal Accuracy Metrics
+
+**Distance Error:**
+```python
+# For each trajectory:
+final_dx, final_dy = trajectory[length-1, 0:2]  # Last valid position
+actual_distance = sqrt(final_dx² + final_dy²)
+
+# Denormalize target distance (if norm_params provided)
+target_distance = (target_norm + 1) / 2 * (d_max - d_min) + d_min
+
+error = abs(actual_distance - target_distance)
+
+# Output metrics:
+# - mean_distance_error, median_distance_error, std_distance_error
+# - max_distance_error, min_distance_error
+```
+
+**Angle Error:**
+```python
+# For each trajectory:
+actual_angle = atan2(final_dy, final_dx)
+target_angle = atan2(sin(target), cos(target))
+
+# Compute shortest angular distance (handles wraparound)
+error = angular_distance(actual_angle, target_angle)
+
+# Output metrics:
+# - mean_angle_error_deg, median_angle_error_deg
+# - max_angle_error_deg, std_angle_error_rad
+```
+
+### Realism Metrics
+
+```python
+# Extract feature statistics from trajectories:
+speeds = trajectory[:length, 2]       # speed feature
+accels = trajectory[:length, 3]       # acceleration feature
+ang_vels = trajectory[:length, 6]     # angular velocity feature
+jerk = diff(accel)                    # smoothness (derivative of accel)
+
+# Output metrics:
+# - gen_speed_mean, gen_speed_std
+# - gen_accel_mean, gen_accel_std
+# - gen_ang_vel_mean, gen_ang_vel_std
+# - gen_smoothness_mean (lower = smoother trajectories)
+
+# If real trajectories provided for comparison:
+# - real_speed_mean, real_speed_std (same for accel, ang_vel)
+# - speed_mean_diff, accel_mean_diff, smoothness_diff
+```
+
+### Diversity Metrics
+
+```python
+# Group trajectories by identical conditions
+# Compute pairwise MSE distances within each group
+# (Requires num_samples > 1 per condition)
+
+# Output metrics:
+# - diversity_mean (higher = more diverse)
+# - diversity_median, diversity_std
+# - num_condition_groups, avg_samples_per_condition
+```
+
+### Interpreting Results
+
+| Metric | Good | Acceptable | Poor |
+|--------|------|------------|------|
+| `mean_distance_error` | < 20px | < 50px | > 100px |
+| `mean_angle_error_deg` | < 10° | < 25° | > 45° |
+| `smoothness_diff` | < 0.01 | < 0.05 | > 0.1 |
+| `diversity_mean` | > 0.001 | > 0.0001 | = 0 (mode collapse) |
 
 ---
 
