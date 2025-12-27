@@ -55,7 +55,7 @@ class InpaintingSampler:
         end_pos: Tuple[float, float],
         length: int,
         ddim_steps: int = 50,
-        eta: float = 0.0,
+        eta: float = 1.0,
         show_progress: bool = True
     ) -> np.ndarray:
         """
@@ -66,7 +66,7 @@ class InpaintingSampler:
             end_pos: Target endpoint (normalized coordinates)
             length: Trajectory length (number of timesteps)
             ddim_steps: Number of DDIM sampling steps
-            eta: DDIM eta (0 = deterministic, 1 = stochastic)
+            eta: Noise scale for re-noising (default 1.0, must be >0 for inpainting)
             show_progress: Show progress bar
 
         Returns:
@@ -121,7 +121,7 @@ class InpaintingSampler:
         endpoints: np.ndarray,
         lengths: np.ndarray,
         ddim_steps: int = 50,
-        eta: float = 0.0,
+        eta: float = 1.0,
         show_progress: bool = True
     ) -> np.ndarray:
         """
@@ -163,8 +163,9 @@ class InpaintingSampler:
 
                 # Inpaint each trajectory in batch
                 for b in range(batch_size):
+                    length_b = int(lens[b].item())  # Use tensor, convert to int
                     x_0_pred[b, 0, :] = starts[b]
-                    x_0_pred[b, lengths[b] - 1, :] = ends[b]
+                    x_0_pred[b, length_b - 1, :] = ends[b]
 
                 if i < len(timesteps) - 1:
                     t_next = timesteps[i + 1]
@@ -180,7 +181,7 @@ class InpaintingSampler:
         target_y: float,
         length: int,
         ddim_steps: int = 50,
-        eta: float = 0.0,
+        eta: float = 1.0,
         show_progress: bool = False
     ) -> np.ndarray:
         """
@@ -240,9 +241,13 @@ class InpaintingSampler:
         Returns:
             x_0: Predicted clean sample
         """
+        # Get alpha values (handle both tensor and numpy array)
         alpha_t = self.diffusion.alphas_cumprod[t]
-        sqrt_alpha = torch.sqrt(torch.tensor(alpha_t, device=self.device))
-        sqrt_one_minus_alpha = torch.sqrt(torch.tensor(1 - alpha_t, device=self.device))
+        if not isinstance(alpha_t, torch.Tensor):
+            alpha_t = torch.tensor(alpha_t, device=self.device, dtype=torch.float32)
+
+        sqrt_alpha = torch.sqrt(alpha_t)
+        sqrt_one_minus_alpha = torch.sqrt(1 - alpha_t)
 
         x_0 = (x_t - sqrt_one_minus_alpha * noise_pred) / sqrt_alpha
         return x_0
@@ -251,31 +256,36 @@ class InpaintingSampler:
         self,
         x_0: torch.Tensor,
         t: int,
-        eta: float = 0.0
+        eta: float = 1.0
     ) -> torch.Tensor:
         """
-        Add noise for timestep t (DDIM forward process).
+        Re-noise x_0 to timestep t for inpainting.
 
-        x_t = sqrt(alpha_t) * x_0 + sqrt(1 - alpha_t) * noise
+        For inpainting, we MUST add noise after modifying x_0.
+        With eta=0 and zero noise, we'd just get scaled x_0, which is wrong.
+
+        x_t = sqrt(alpha_t) * x_0 + sqrt(1 - alpha_t) * eta * noise
 
         Args:
-            x_0: Clean sample
+            x_0: Clean sample (after inpainting)
             t: Target timestep
-            eta: Stochasticity (0 = deterministic)
+            eta: Noise scale (default 1.0 for full noise, NOT 0)
 
         Returns:
             x_t: Noisy sample at timestep t
         """
+        # Get alpha values (handle both tensor and numpy array)
         alpha_t = self.diffusion.alphas_cumprod[t]
-        sqrt_alpha = torch.sqrt(torch.tensor(alpha_t, device=self.device))
-        sqrt_one_minus_alpha = torch.sqrt(torch.tensor(1 - alpha_t, device=self.device))
+        if not isinstance(alpha_t, torch.Tensor):
+            alpha_t = torch.tensor(alpha_t, device=self.device, dtype=torch.float32)
 
-        if eta > 0:
-            noise = torch.randn_like(x_0)
-        else:
-            noise = torch.zeros_like(x_0)
+        sqrt_alpha = torch.sqrt(alpha_t)
+        sqrt_one_minus_alpha = torch.sqrt(1 - alpha_t)
 
-        x_t = sqrt_alpha * x_0 + sqrt_one_minus_alpha * noise
+        # For inpainting, we need fresh noise to properly re-noise
+        # eta scales the noise (1.0 = standard, <1.0 = less noise, >1.0 = more)
+        noise = torch.randn_like(x_0)
+        x_t = sqrt_alpha * x_0 + sqrt_one_minus_alpha * eta * noise
         return x_t
 
 

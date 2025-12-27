@@ -162,8 +162,8 @@ def main():
     # Generation settings
     parser.add_argument('--ddim_steps', type=int, default=50,
                         help='DDIM sampling steps')
-    parser.add_argument('--eta', type=float, default=0.0,
-                        help='DDIM eta (0=deterministic, 1=stochastic)')
+    parser.add_argument('--eta', type=float, default=1.0,
+                        help='DDIM eta for inpainting (1.0=proper re-noising, required for inpainting)')
 
     # Data
     parser.add_argument('--data_dir', type=str, default='processed_data_v8',

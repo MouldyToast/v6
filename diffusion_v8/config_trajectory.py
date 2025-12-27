@@ -80,7 +80,7 @@ class TrajectoryDiffusionConfig:
     # =========================================================================
     sampling_method: str = 'ddim'   # 'ddpm', 'ddim'
     ddim_steps: int = 50            # DDIM sampling steps (faster)
-    ddim_eta: float = 0.0           # DDIM eta (0=deterministic, 1=DDPM)
+    ddim_eta: float = 1.0           # DDIM eta (1.0 required for inpainting re-noising)
     clip_denoised: bool = False     # Clip denoised samples to [-1, 1]
 
     # Inpainting configuration (V8 specific)
